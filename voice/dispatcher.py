@@ -10,6 +10,7 @@ import logging
 from core.const import PLAY_MODE_NORMAL
 from core.library import MusicLibrary
 from core.player import Player
+from .cn_num import cn_to_arabic
 from .music_cmds import match_music_command
 
 log = logging.getLogger("mibox")
@@ -54,18 +55,27 @@ class CommandDispatcher:
             log.warning("没有可用音箱，忽略语音指令")
             return
 
-        hit = match_music_command(query)
-        if hit:
-            action, params = hit
-            log.info(f"[{player.speaker.name}] 语音: '{query}' -> {action} {params}")
-            await self._run_music(player, action, params)
-            return
+        # 原句未命中时，用中文数字转换后的句子再试一轮
+        # （ASR 常把"二十六度"识别成中文数字，而规则里的 \d 只认阿拉伯数字）
+        candidates = [query]
+        cn = cn_to_arabic(query)
+        if cn != query:
+            candidates.append(cn)
+
+        for cand in candidates:
+            hit = match_music_command(cand)
+            if hit:
+                action, params = hit
+                log.info(f"[{player.speaker.name}] 语音: '{query}' -> {action} {params}")
+                await self._run_music(player, action, params)
+                return
 
         if self.ha_bridge is not None:
-            ok = await self.ha_bridge.handle(query)
-            if ok:
-                log.info(f"[{player.speaker.name}] 语音: '{query}' -> HA 规则命中")
-                return
+            for cand in candidates:
+                ok = await self.ha_bridge.handle(cand)
+                if ok:
+                    log.info(f"[{player.speaker.name}] 语音: '{query}' -> HA 规则命中")
+                    return
 
         log.debug(f"未匹配任何指令: {query}")
 

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 
+from voice.cn_num import cn_to_arabic
 from .client import HAClient
 
 log = logging.getLogger("mibox")
@@ -30,59 +31,65 @@ class RuleEngine:
         self.rules = rules
 
     async def handle(self, query: str) -> bool:
-        """返回是否命中"""
+        """返回是否命中。原句未命中时，用中文数字转换后的句子再试一轮。"""
         q = query.strip()
         if not q or not self.rules:
             return False
 
-        for rule in self.rules:
-            pattern = rule.get("pattern", "")
-            if not pattern:
-                continue
-            try:
-                m = re.search(pattern, q)
-            except re.error:
-                log.warning(f"规则正则非法: {pattern}")
-                continue
-            if not m:
-                continue
+        candidates = [q]
+        cn = cn_to_arabic(q)
+        if cn != q:
+            candidates.append(cn)
 
-            domain = rule.get("domain", "")
-            service = rule.get("service", "")
-            if not domain or not service:
-                continue
+        for cand in candidates:
+            for rule in self.rules:
+                pattern = rule.get("pattern", "")
+                if not pattern:
+                    continue
+                try:
+                    m = re.search(pattern, cand)
+                except re.error:
+                    log.warning(f"规则正则非法: {pattern}")
+                    continue
+                if not m:
+                    continue
 
-            groups = m.groups()
-            data: dict = {}
-            entity_id = _fill(rule.get("entity_id", ""), groups)
-            if entity_id:
-                data["entity_id"] = entity_id
+                domain = rule.get("domain", "")
+                service = rule.get("service", "")
+                if not domain or not service:
+                    continue
 
-            for k, v in (rule.get("data") or {}).items():
-                data[str(_fill(k, groups))] = _fill(v, groups)
+                groups = m.groups()
+                data: dict = {}
+                entity_id = _fill(rule.get("entity_id", ""), groups)
+                if entity_id:
+                    data["entity_id"] = entity_id
 
-            # 数值字段转成数字发送；HA 的 number.set_value 要求 value 为数字，
-            # 字符串 "26" / "26.5" 在部分版本会被拒绝
-            for key in ("brightness_pct", "temperature", "percentage", "position", "value"):
-                if key in data:
-                    try:
-                        fv = float(data[key])
-                        data[key] = int(fv) if fv == int(fv) else fv
-                    except (ValueError, TypeError):
-                        pass
+                for k, v in (rule.get("data") or {}).items():
+                    data[str(_fill(k, groups))] = _fill(v, groups)
 
-            delay = int(rule.get("delay_minutes", 0) or 0)
-            if delay > 0:
-                log.info(f"规则命中（{delay} 分钟后执行）: {q} -> {domain}.{service}")
-                asyncio.create_task(self._delayed(delay, domain, service, data))
-            else:
-                await self.client.call_service(domain, service, data)
+                # 数值字段转成数字发送；HA 的 number.set_value 要求 value 为数字，
+                # 字符串 "26" / "26.5" 在部分版本会被拒绝
+                for key in ("brightness_pct", "temperature", "percentage", "position", "value"):
+                    if key in data:
+                        try:
+                            fv = float(data[key])
+                            data[key] = int(fv) if fv == int(fv) else fv
+                        except (ValueError, TypeError):
+                            pass
 
-            reply = _fill(rule.get("reply", ""), groups)
-            if reply:
-                # 一期不做 TTS，仅在日志与 Web 界面记录
-                log.info(f"规则回复（未播报）: {reply}")
-            return True
+                delay = int(rule.get("delay_minutes", 0) or 0)
+                if delay > 0:
+                    log.info(f"规则命中（{delay} 分钟后执行）: {cand} -> {domain}.{service}")
+                    asyncio.create_task(self._delayed(delay, domain, service, data))
+                else:
+                    await self.client.call_service(domain, service, data)
+
+                reply = _fill(rule.get("reply", ""), groups)
+                if reply:
+                    # 一期不做 TTS，仅在日志与 Web 界面记录
+                    log.info(f"规则回复（未播报）: {reply}")
+                return True
 
         return False
 
