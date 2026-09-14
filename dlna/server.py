@@ -13,11 +13,11 @@ from typing import Optional
 
 from aiohttp import web
 
-from ..core.buffer import BufferManager
-from ..core.config import Config
-from ..core.media import MediaService
-from ..core.player import Player, QueueItem
-from ..core.const import (
+from core.buffer import BufferManager
+from core.config import Config
+from core.media import MediaService
+from core.player import Player, QueueItem
+from core.const import (
     AVTRANSPORT_URN,
     CONNECTION_MANAGER_URN,
     MI_STATUS_PLAYING,

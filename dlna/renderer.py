@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 
-from ..core.const import (
+from core.const import (
     PLAY_MODE_NORMAL,
     TRANSPORT_STATE_NO_MEDIA,
     TRANSPORT_STATE_PAUSED,
@@ -18,7 +18,7 @@ from ..core.const import (
     TRANSPORT_STATE_TRANSITIONING,
     TRANSPORT_STATUS_OK,
 )
-from ..core.player import Player
+from core.player import Player
 
 log = logging.getLogger("mibox")
 

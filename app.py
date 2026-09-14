@@ -94,7 +94,9 @@ class AppState:
 
             await self.auth.update_speakers_info()
             await self.library.scan()
-            self.library.attach_durations()
+            # 读取时长要逐个打开文件，曲库大时会明显耗时，放到后台线程避免阻塞启动。
+            # 播放时会按需补读，所以这里晚一点完成也不影响使用。
+            asyncio.create_task(asyncio.to_thread(self.library.attach_durations))
 
             self._build_players()
 

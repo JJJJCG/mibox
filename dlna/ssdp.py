@@ -12,7 +12,7 @@ import random
 import socket
 import struct
 
-from ..core.const import (
+from core.const import (
     AVTRANSPORT_URN,
     CONNECTION_MANAGER_URN,
     DEVICE_TYPE,

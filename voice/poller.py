@@ -12,9 +12,9 @@ import time
 
 from aiohttp import ClientSession, ClientTimeout
 
-from ..core.auth import AuthManager
-from ..core.config import Config
-from ..core.const import GET_ASK_BY_MINA, LATEST_ASK_API
+from core.auth import AuthManager
+from core.config import Config
+from core.const import GET_ASK_BY_MINA, LATEST_ASK_API
 
 log = logging.getLogger("mibox")
 

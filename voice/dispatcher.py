@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import logging
 
-from ..core.const import PLAY_MODE_NORMAL
-from ..core.library import MusicLibrary
-from ..core.player import Player
+from core.const import PLAY_MODE_NORMAL
+from core.library import MusicLibrary
+from core.player import Player
 from .music_cmds import match_music_command
 
 log = logging.getLogger("mibox")

@@ -241,6 +241,9 @@ document.querySelectorAll('.tabs button').forEach(b=>{
     document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
     document.getElementById('tab-'+b.dataset.tab).classList.add('active');
+    const t = b.dataset.tab;
+    if(t === 'devices'){ loadDevices().catch(()=>{}); }
+    if(t === 'library'){ loadLibrary().catch(()=>{}); }
   };
 });
 
@@ -442,7 +445,12 @@ async function testRule(){
     ? '命中: '+r.rule.domain+'.'+r.rule.service : '未命中任何规则';
 }
 
-refresh(); loadLibrary(); loadConfig(); loadRules();
+refresh();
+// 未登录时部分接口会失败，逐个 catch 避免整体脚本中断
+loadLibrary().catch(()=>{});
+loadConfig().catch(()=>{});
+loadRules().catch(()=>{});
+loadDevices().catch(()=>{});
 setInterval(refresh, 3000);
 document.getElementById('selDevice').onchange = refresh;
 </script>
