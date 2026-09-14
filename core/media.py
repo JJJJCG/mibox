@@ -34,85 +34,6 @@ class MediaService:
         """DLNA 推送内容的缓冲代理 URL"""
         return f"{self.config.base_url()}/proxy/{token}"
 
-    def abs_path_of(self, url: str) -> str:
-        """把 /music/xxx 或 /cache/xxx 的对外 URL 还原成本地绝对路径"""
-        if not url:
-            return ""
-        for marker, root in (("/music/", self.config.music_path),
-                             ("/cache/", self.config.cache_dir)):
-            if marker in url:
-                rel = unquote(url.split(marker, 1)[1].split("?")[0])
-                full = os.path.normpath(os.path.join(root, rel))
-                if os.path.isfile(full):
-                    return full
-                return ""
-        return ""
-
-    async def make_seek_url(self, abs_path: str, offset: int) -> str | None:
-        """从 offset 秒处切一段 mp3 并返回可投递的 URL
-
-        小爱的 URL 播放没有"断点续播"，只能把音频从暂停位置重新编码后再投递。
-        """
-        if not abs_path or not os.path.isfile(abs_path) or offset <= 0:
-            return None
-        key = f"{abs_path}|{offset}"
-        out = os.path.join(
-            self.config.cache_dir,
-            f"seek_{hashlib.md5(key.encode()).hexdigest()}.mp3",
-        )
-        if not (os.path.exists(out) and os.path.getsize(out) > 0):
-            cmd = [
-                "ffmpeg", "-y", "-loglevel", "error", "-ss", str(offset),
-                "-i", abs_path, "-vn", "-codec:a", "libmp3lame", "-b:a", "192k", out,
-            ]
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                )
-                _, err = await proc.communicate()
-                if proc.returncode != 0:
-                    log.error(f"切片失败 {abs_path}@{offset}s: {err.decode(errors='ignore')[:200]}")
-                    return None
-            except FileNotFoundError:
-                log.error("未找到 ffmpeg，无法切片续播")
-                return None
-            except Exception as e:
-                log.error(f"切片异常: {e}")
-                return None
-        return f"{self.config.base_url()}/cache/{os.path.basename(out)}"
-
-    async def ensure_silence(self) -> str | None:
-        """1 秒静音 mp3，用于强制打断音箱当前播放
-
-        部分型号对 MiNA 的 pause/stop 指令无响应，此时投递一段静音覆盖，
-        音箱播完 1 秒自然停止，比反复发指令可靠。
-        """
-        out = os.path.join(self.config.cache_dir, "_silence.mp3")
-        if os.path.exists(out) and os.path.getsize(out) > 0:
-            return f"{self.config.base_url()}/cache/{os.path.basename(out)}"
-        cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono", "-t", "1",
-            "-codec:a", "libmp3lame", "-b:a", "64k", out,
-        ]
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
-            )
-            _, err = await proc.communicate()
-            if proc.returncode != 0:
-                log.error(f"生成静音失败: {err.decode(errors='ignore')[:200]}")
-                return None
-        except FileNotFoundError:
-            log.error("未找到 ffmpeg，无法生成静音文件")
-            return None
-        except Exception as e:
-            log.error(f"生成静音异常: {e}")
-            return None
-        return f"{self.config.base_url()}/cache/{os.path.basename(out)}"
-
     # ---------------- 时长 ----------------
     def get_duration(self, abs_path: str) -> int:
         """返回秒，失败返回 0"""
@@ -222,16 +143,15 @@ class MediaService:
     def cleanup_cache(self, max_age_hours: int = 24, max_files: int = 500) -> int:
         """清理 DLNA 推送产生的临时音频
 
-        只清理 buf_*/seek_*/_seek*/_c.mp3 这类一次性产物；
+        只清理 buf_*/_seek*/_c.mp3 这类一次性产物；
         本地音乐的转码结果（按内容哈希命名）保留复用，不受影响。
-        _silence.mp3 是反复使用的兜底文件，不在此列。
         """
         root = self.config.cache_dir
         if not os.path.isdir(root):
             return 0
 
         now = time.time()
-        markers = ("buf_", "seek_", "_seek", "_c.mp3")
+        markers = ("buf_", "_seek", "_c.mp3")
         temps: list[tuple[float, str]] = []
 
         for name in os.listdir(root):

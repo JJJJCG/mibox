@@ -8,22 +8,19 @@ import logging
 
 from .auth import AuthManager
 from .config import Speaker
-from .const import DEFAULT_AUDIO_ID, MI_STATUS_PLAYING, MI_STATUS_STOPPED
+from .const import DEFAULT_AUDIO_ID, MI_STATUS_STOPPED
 
 log = logging.getLogger("mibox")
-
-# 停止指令发出后，等待音箱状态落地的间隔与重试次数
-STOP_CHECK_INTERVAL = 0.8
-STOP_CHECK_RETRY = 2
 
 
 class SpeakerController:
     """单台音箱的控制接口"""
 
-    def __init__(self, speaker: Speaker, auth: AuthManager, media=None):
+    def __init__(self, speaker: Speaker, auth: AuthManager, media=None, streams=None):
         self.speaker = speaker
         self.auth = auth
         self.media = media
+        self.streams = streams
         self._last_volume = 50
 
     @property
@@ -58,91 +55,48 @@ class SpeakerController:
             log.error(f"play_url 失败 ({self.speaker.name}): {e}")
             return False
 
-    async def pause(self) -> bool:
-        """暂停
-
-        云端指令对 URL 直投的内容经常无效，所以这里是"发指令 → 校验状态 →
-        升级手段 → 静音覆盖"的阶梯式处理，任一环节真的停下来就结束。
-        """
+    async def pause(self, url: str = "") -> bool:
+        """暂停：先掐断本地流（主手段），再补一条云端指令（副手段）"""
         try:
+            self.kill(url)
             await self.auth.ensure_login()
             mina = self.auth.get_mina()
             if mina is None:
-                return False
-
+                return True
             if self.speaker.use_music_api():
                 await mina.player_stop(self.device_id)
             else:
                 await mina.player_pause(self.device_id)
-
-            for i in range(STOP_CHECK_RETRY):
-                await asyncio.sleep(STOP_CHECK_INTERVAL)
-                if not await self._is_playing():
-                    return True
-                log.info(f"pause 未生效({self.speaker.name})，改用 stop 指令重试 {i + 1}")
-                await mina.player_stop(self.device_id)
-
-            await asyncio.sleep(STOP_CHECK_INTERVAL)
-            if not await self._is_playing():
-                return True
-
-            log.warning(f"[{self.speaker.name}] 云端暂停/停止均无效，用静音覆盖打断")
-            return await self._cover_with_silence()
+            return True
         except Exception as e:
             log.error(f"pause 失败: {e}")
             return False
 
-    async def stop(self) -> bool:
-        """停止，策略同 pause，但直接以 stop 指令为主"""
+    async def stop(self, url: str = "") -> bool:
+        """停止：同样以掐断本地流为主"""
         try:
+            self.kill(url)
             await self.auth.ensure_login()
             mina = self.auth.get_mina()
             if mina is None:
-                return False
-
-            # 先 pause 再 stop：部分型号只认 pause，另一部分只认 stop，
-            # 两条都发覆盖面最广（xiaomusic 的 force_stop 也是这个思路）
-            await mina.player_pause(self.device_id)
-            await asyncio.sleep(0.4)
-            await mina.player_stop(self.device_id)
-
-            for i in range(STOP_CHECK_RETRY):
-                await asyncio.sleep(STOP_CHECK_INTERVAL)
-                if not await self._is_playing():
-                    return True
-                log.info(f"stop 未生效({self.speaker.name})，重试 {i + 1}")
-                await mina.player_stop(self.device_id)
-
-            await asyncio.sleep(STOP_CHECK_INTERVAL)
-            if not await self._is_playing():
                 return True
-
-            log.warning(f"[{self.speaker.name}] 云端停止无效，用静音覆盖打断")
-            return await self._cover_with_silence()
+            await mina.player_pause(self.device_id)
+            await asyncio.sleep(0.3)
+            await mina.player_stop(self.device_id)
+            return True
         except Exception as e:
             log.error(f"stop 失败: {e}")
             return False
 
-    async def _is_playing(self) -> bool:
-        """音箱当前是否仍在播放（查询失败时保守返回 False，避免死循环重试）"""
-        try:
-            st = await self.get_status()
-        except Exception:
-            return False
-        return st.get("status") == MI_STATUS_PLAYING
+    def kill(self, url: str):
+        """掐断音箱正在拉的音频流"""
+        if self.streams and url:
+            self.streams.kill(url)
 
-    async def _cover_with_silence(self) -> bool:
-        """投递 1 秒静音覆盖当前播放，音箱播完自然停"""
-        if self.media is None:
-            return False
-        try:
-            url = await self.media.ensure_silence()
-            if not url:
-                return False
-            return await self.play_url(url)
-        except Exception as e:
-            log.error(f"静音覆盖失败 ({self.speaker.name}): {e}")
-            return False
+    def release(self, url: str):
+        """解除中断标记（重新投递同一文件前调用）"""
+        if self.streams and url:
+            self.streams.release(url)
 
     async def set_volume(self, volume: int) -> bool:
         volume = max(0, min(100, volume))

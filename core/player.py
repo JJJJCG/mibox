@@ -98,6 +98,8 @@ class Player:
         if not item.url:
             return False
 
+        # 重新投递前解除中断标记，否则音箱会被自己上一次的"断流"挡住
+        self.controller.release(item.url)
         ok = await self.controller.play_url(item.url)
         if not ok:
             return False
@@ -194,62 +196,36 @@ class Player:
             return
         self._cancel_timer()
         self._seq += 1
-        # 先记下暂停位置，resume 时按这个偏移重新切片
+        # 记下暂停位置供界面显示，然后掐断音箱正在拉的流
         self._paused_pos = float(self.elapsed())
         self._user_paused = True
         self._pause_at = time.time()
-        await self.controller.pause()
+        await self.controller.pause(self._current_url())
         self.state = "paused"
         self.started_at = 0.0
-        log.info(f"[{self.speaker.name}] 暂停于 {int(self._paused_pos)}s")
+        log.info(f"[{self.speaker.name}] 暂停于 {int(self._paused_pos)}s（已断流）")
 
     async def resume(self):
+        # 被外部（语音/其他设备）停止时 state 是 idle，此时也允许"继续"，
+        # 否则按钮点了毫无反应
+        if self.state == "idle" and self.cur_item:
+            await self._play_current()
+            return
         if self.state != "paused":
             return
-        offset = int(self._paused_pos)
-        self._user_paused = False
-
-        # 能定位到本地音频文件就按暂停位置切片，实现真正的续播
-        if self.cur_item and offset > 2:
-            url = await self._seek_url_at(offset)
-            if url:
-                ok = await self.controller.play_url(url)
-                if ok:
-                    self.state = "playing"
-                    self.started_at = time.time() - offset
-                    self._deliver_at = time.time()
-                    remaining = max(1, (self.cur_item.duration or 0) - offset)
-                    self._schedule_next(wait=remaining)
-                    self._paused_pos = 0.0
-                    log.info(f"[{self.speaker.name}] 从 {offset}s 续播，剩余 {remaining}s")
-                    return
-                log.warning(f"[{self.speaker.name}] 续播投递失败，退回从头播放")
-
-        # 拿不到本地文件或切片失败：退回从头播放
+        # 断流之后音箱没有"接着播"这回事，重新投递整首
         self._paused_pos = 0.0
+        self._user_paused = False
         if self.cur_item:
             await self._play_current()
 
-    async def _seek_url_at(self, offset: int) -> Optional[str]:
-        """找到当前曲目的本地文件并切片出 offset 秒之后的音频"""
-        try:
-            src = ""
-            song = getattr(self.cur_item, "song", None)
-            if song is not None and getattr(song, "path", ""):
-                src = song.path
-            else:
-                src = self.media.abs_path_of(self.cur_item.url)
-            if not src:
-                return None
-            return await self.media.make_seek_url(src, offset)
-        except Exception as e:
-            log.warning(f"生成续播切片失败: {e}")
-            return None
+    def _current_url(self) -> str:
+        return self.cur_item.url if self.cur_item else ""
 
     async def stop(self):
         self._cancel_timer()
         self._seq += 1
-        await self.controller.stop()
+        await self.controller.stop(self._current_url())
         self.state = "idle"
         self.cur_item = None
         self.started_at = 0.0

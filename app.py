@@ -13,8 +13,9 @@ import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response, StreamingResponse
 
 from core.auth import AuthManager
 from core.buffer import BufferManager
@@ -25,6 +26,7 @@ from core.media import MediaService
 from core.player import Player
 from core.qr_login import QRLogin
 from core.speaker import SpeakerController
+from core.streams import StreamManager, guess_content_type, parse_range
 from dlna.server import DLNAServer
 from ha.client import HAClient
 from ha.rules import RuleEngine
@@ -45,6 +47,7 @@ class AppState:
         self.media = MediaService(self.config)
         self.library = MusicLibrary(self.config, self.media)
         self.buffers = BufferManager()
+        self.streams = StreamManager()           # 可中断的音频流管理
         self.players: dict[str, Player] = {}     # did -> Player
         self.dlna: DLNAServer | None = None
         self.ha_client: HAClient | None = None
@@ -133,7 +136,7 @@ class AppState:
             if not sp.device_id:
                 log.warning(f"音箱 {sp.name or sp.did} 缺少 device_id，跳过")
                 continue
-            controller = SpeakerController(sp, self.auth, self.media)
+            controller = SpeakerController(sp, self.auth, self.media, self.streams)
             player = Player(sp, controller, self.config, self.media)
             player.start_monitor()
             self.players[sp.did] = player
@@ -157,6 +160,7 @@ class AppState:
         self.media = MediaService(self.config)
         self.library = MusicLibrary(self.config, self.media)
         self.buffers = BufferManager()
+        self.streams = StreamManager()
         return await self.bootstrap()
 
     async def shutdown(self):
@@ -547,19 +551,46 @@ async def api_ha_test_rule(request: Request):
 
 # ==================== 媒体文件 ====================
 @app.get("/music/{path:path}")
-async def api_music_file(path: str):
+async def api_music_file(path: str, request: Request):
     full = os.path.join(state.config.music_path, path)
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(full)
+    return _audio_stream(full, f"/music/{path}", request)
 
 
 @app.get("/cache/{name}")
-async def api_cache_file(name: str):
+async def api_cache_file(name: str, request: Request):
     full = os.path.join(state.config.cache_dir, name)
     if not os.path.isfile(full):
         raise HTTPException(status_code=404, detail="缓存不存在")
-    return FileResponse(full)
+    return _audio_stream(full, f"/cache/{name}", request)
+
+
+def _audio_stream(full: str, key: str, request: Request):
+    """可控的音频流响应：暂停/停止时可被随时掐断"""
+    if state.streams.is_blocked(key):
+        return Response(status_code=403, text="playback stopped")
+
+    size = os.path.getsize(full)
+    rng = request.headers.get("Range")
+    start, end = parse_range(rng, size)
+    last = size - 1 if end is None else end
+    length = max(1, last - start + 1)
+
+    headers = {
+        "Content-Type": guess_content_type(full),
+        "Content-Length": str(length),
+        "Accept-Ranges": "bytes",
+    }
+    status = 200
+    if rng:
+        headers["Content-Range"] = f"bytes {start}-{last}/{size}"
+        status = 206
+    return StreamingResponse(
+        state.streams.iter_file(full, key, start, end),
+        status_code=status,
+        headers=headers,
+    )
 
 
 if WEB_DIR.exists():
