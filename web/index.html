@@ -226,7 +226,7 @@ input[type=range]{width:180px}
 </main>
 
 <script>
-let S = {players:[], devices:[], curDid:null};
+let S = {players:[], devices:[], curDid:null, lastLibCount:null, lastLogin:null};
 
 async function api(url, opts){
   const r = await fetch(url, opts);
@@ -258,6 +258,17 @@ async function refresh(){
     setBadge('badgeLib', '音乐 '+st.library_count);
     document.getElementById('badgeHost').textContent = st.hostname+':'+st.web_port;
     if(st.error){ setBadge('badgeReady', st.error.slice(0,30), 'warn'); }
+
+    // 服务端曲库数量变化（扫描完成/重新初始化）时，自动刷新音乐库列表
+    if(S.lastLibCount !== null && st.library_count !== S.lastLibCount){
+      loadLibrary().catch(()=>{});
+    }
+    S.lastLibCount = st.library_count;
+    // 登录态变化时刷新设备列表
+    if(S.lastLogin !== null && st.logged_in !== S.lastLogin){
+      loadDevices().catch(()=>{});
+    }
+    S.lastLogin = st.logged_in;
 
     const sel = document.getElementById('selDevice');
     if(sel.options.length !== S.players.length){
