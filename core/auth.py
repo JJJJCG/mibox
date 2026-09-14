@@ -210,10 +210,11 @@ class AuthManager:
             return devices or []
         except Exception as e:
             log.warning(f"获取设备列表失败: {e}")
-            if time.time() - self._last_relogin < RELOGIN_COOLDOWN:
-                return []
+            # 失败后的重登必须走冷却：此前用 force=True 绕过冷却，会与前端
+            # 轮询形成"失败→强刷→登录态抖动→再拉取"的循环，还可能因频繁
+            # 刷新 serviceToken 把其他会话（或自己）踢下线
             self._logged_in = False
-            if not await self.login(force=True):
+            if not await self.login():
                 return []
             try:
                 return await self.mina.device_list() or []

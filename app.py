@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -195,6 +196,8 @@ async def lifespan(app: FastAPI):
         level=logging.DEBUG if state.config.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # uvicorn 此刻已完成 logging 配置，替换其访问日志 handler 并挂上过滤器
+    _install_access_log_filter()
     os.makedirs(state.config.conf_path, exist_ok=True)
     os.makedirs(state.config.music_path, exist_ok=True)
     # 初始化（小米登录、拉设备、扫曲库）涉及网络与磁盘 IO，可能耗时数十秒；
@@ -211,9 +214,41 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="mibox", version="0.1.0", lifespan=lifespan)
 
 
-# 注：曾尝试用 logging.Filter 静音前端轮询 /api/status 的访问日志，但 uvicorn
-# 会在 import 应用之后用 dictConfig 重建 logger 的 handler，过滤器安装时机难以
-# 稳定覆盖，故不再处理。前端已将轮询降到 5s 并在页面隐藏时暂停，日志量已足够少。
+class _HeartbeatFilter(logging.Filter):
+    """静音前端轮询 /api/status 的成功访问日志（非 200 照常记录）
+
+    注意：uvicorn 的 message 以状态码结尾（如 `... HTTP/1.1" 200`），
+    没有 " 200 OK" 里的那个尾随空格，判断必须用 endswith。
+    """
+
+    _QUIET = ('"GET /api/status',)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage().rstrip()
+        except Exception:
+            return True
+        if msg.endswith(" 200") and any(q in msg for q in self._QUIET):
+            return False
+        return True
+
+
+def _install_access_log_filter():
+    """用自带过滤器的 handler 替换 uvicorn 的访问日志 handler
+
+    此前尝试给 uvicorn 配置好的 handler 追加 filter，实测真实请求不生效
+    （模拟日志可被拦，真实请求绕过了追加的 filter）。改为直接移除
+    uvicorn 的 handler、装上自己的，lifespan 之后 uvicorn 不会再配置
+    logging，因此不存在被覆盖的问题。
+    """
+    lg = logging.getLogger("uvicorn.access")
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+    h = logging.StreamHandler(sys.stdout)
+    h.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    h.addFilter(_HeartbeatFilter())
+    lg.addHandler(h)
+    lg.propagate = False
 
 
 # ==================== 前端 ====================

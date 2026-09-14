@@ -265,9 +265,13 @@ async function refresh(){
       loadLibrary().catch(()=>{});
     }
     S.lastLibCount = st.library_count;
-    // 登录态变化时刷新设备列表
+    // 登录态变化时刷新设备列表（30s 节流：登录态抖动时不至于连环拉取）
     if(S.lastLogin !== null && st.logged_in !== S.lastLogin){
-      loadDevices().catch(()=>{});
+      const now = Date.now();
+      if(now - (S.lastAutoDevices||0) > 30000){
+        S.lastAutoDevices = now;
+        loadDevices().catch(()=>{});
+      }
     }
     S.lastLogin = st.logged_in;
 
