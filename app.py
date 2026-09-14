@@ -53,6 +53,7 @@ class AppState:
         self.ready = False
         self.last_error = ""
         self._cleanup_task: asyncio.Task | None = None
+        self.boot_task: asyncio.Task | None = None
         self.qr: QRLogin | None = None
         self._qr_applied = False
 
@@ -93,7 +94,8 @@ class AppState:
                 return False
 
             await self.auth.update_speakers_info()
-            await self.library.scan()
+            # 扫描内部是同步 IO（os.walk/stat），曲库大时会卡住整个事件循环，放线程池
+            await asyncio.to_thread(self.library.scan)
             # 读取时长要逐个打开文件，曲库大时会明显耗时，放到后台线程避免阻塞启动。
             # 播放时会按需补读，所以这里晚一点完成也不影响使用。
             asyncio.create_task(asyncio.to_thread(self.library.attach_durations))
@@ -195,8 +197,14 @@ async def lifespan(app: FastAPI):
     )
     os.makedirs(state.config.conf_path, exist_ok=True)
     os.makedirs(state.config.music_path, exist_ok=True)
-    await state.bootstrap()
+    # 初始化（小米登录、拉设备、扫曲库）涉及网络与磁盘 IO，可能耗时数十秒；
+    # 放到后台执行，让 Web 立即可访问，避免浏览器刷新时一直转圈。
+    state.boot_task = asyncio.create_task(state.bootstrap())
     yield
+    try:
+        await asyncio.wait_for(state.boot_task, timeout=10)
+    except (asyncio.TimeoutError, Exception):
+        pass
     await state.shutdown()
 
 
@@ -220,8 +228,10 @@ async def index():
 # ==================== 状态 ====================
 @app.get("/api/status")
 async def api_status():
+    booting = state.boot_task is not None and not state.boot_task.done()
     return {
         "ready": state.ready,
+        "booting": booting,
         "error": state.last_error,
         "hostname": state.config.hostname,
         "web_port": state.config.web_port,

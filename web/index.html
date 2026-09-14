@@ -254,7 +254,7 @@ async function refresh(){
   try{
     const st = await api('/api/status');
     S.players = st.players || [];
-    setBadge('badgeReady', st.ready?'就绪':'未就绪', st.ready?'ok':'err');
+    setBadge('badgeReady', st.booting?'初始化中…':(st.ready?'就绪':'未就绪'), st.booting?'warn':(st.ready?'ok':'err'));
     setBadge('badgeLogin', st.logged_in?'已登录':'未登录', st.logged_in?'ok':'err');
     setBadge('badgeLib', '音乐 '+st.library_count);
     document.getElementById('badgeHost').textContent = st.hostname+':'+st.web_port;
