@@ -80,8 +80,11 @@ class AuthManager:
             elif self.config.account and self.config.password:
                 ok = await self._login_by_password(token_store)
             else:
-                log.warning("未配置小米账号/密码/cookie，跳过登录")
-                ok = False
+                # cookie/账号密码都缺失：尝试用本地缓存 token 恢复，
+                # 避免一次误保存清空 cookie 后必须重新扫码
+                ok = await self._login_by_cached_token(token_store)
+                if not ok:
+                    log.warning("未配置小米账号/密码/cookie，且无有效缓存 token")
 
             self.mina = MiNAService(self.account) if self.account else None
             self.miio = MiIOService(self.account) if self.account else None
@@ -179,6 +182,25 @@ class AuthManager:
                 log.error("登录验证失败：密码错误、二次验证或需人机验证，建议改用 cookie 登录")
             else:
                 log.error(f"登录失败: {e}")
+            return False
+
+    async def _login_by_cached_token(self, token_store: str) -> bool:
+        """直接复用本地缓存的登录态（.mi.token 里的 micoapi serviceToken）"""
+        try:
+            account = MiAccount(self.session, "", "", token_store=token_store)
+            account.now_ua = APP_UA
+            cached = account.token_store.load_token() if account.token_store else None
+            if not (cached and cached.get("passToken") and "micoapi" in cached):
+                return False
+            account.token = cached
+            mina = MiNAService(account)
+            await mina.device_list()   # 轻量验证缓存凭据是否仍有效
+            self.account = account
+            self.mina = mina
+            log.info("已用本地缓存 token 恢复登录")
+            return True
+        except Exception as e:
+            log.warning(f"本地缓存 token 无效或已过期: {e}")
             return False
 
     @staticmethod

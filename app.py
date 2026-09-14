@@ -362,14 +362,20 @@ async def api_get_config():
 async def api_save_config(request: Request):
     data = await request.json()
     cfg = state.config
+    # 敏感字段（前端不回显）：空值一律视为"未修改"，绝不能用空串
+    # 覆盖已保存的凭据（否则一次普通保存就会把扫码登录清掉）
+    sensitive = ("password", "cookie", "ha_token")
     for key in (
         "account", "password", "cookie", "mi_did", "hostname",
         "web_port", "dlna_port", "music_path", "default_volume",
         "enable_dlna", "enable_voice", "enable_ha", "ha_url",
         "ha_token", "pull_ask_sec",
     ):
-        if key in data and data[key] is not None:
-            setattr(cfg, key, data[key])
+        if key not in data or data[key] is None:
+            continue
+        if key in sensitive and not str(data[key]).strip():
+            continue
+        setattr(cfg, key, data[key])
     cfg.save()
     return {"ok": True, "need_restart": True}
 

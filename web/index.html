@@ -366,7 +366,6 @@ async function loadConfig(){
 async function saveConfig(){
   const body = {
     account:document.getElementById('cfgAccount').value,
-    cookie:document.getElementById('cfgCookie').value,
     hostname:document.getElementById('cfgHost').value,
     web_port:+document.getElementById('cfgWebPort').value,
     dlna_port:+document.getElementById('cfgDlnaPort').value,
@@ -377,8 +376,12 @@ async function saveConfig(){
     pull_ask_sec:+document.getElementById('cfgPull').value,
     ha_url:document.getElementById('cfgHaUrl').value,
   };
+  // 敏感字段（密码/cookie/令牌）在界面上不回显——空值表示"保持不变"，
+  // 绝不能把空串发回去覆盖已保存的凭据（否则扫码登录会被清空）
   const pw = document.getElementById('cfgPassword').value;
   if(pw) body.password = pw;
+  const ck = document.getElementById('cfgCookie').value;
+  if(ck) body.cookie = ck;
   const tk = document.getElementById('cfgHaToken').value;
   if(tk) body.ha_token = tk;
   await post('/api/config', body);
