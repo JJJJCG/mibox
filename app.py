@@ -77,6 +77,11 @@ class AppState:
             if self._cleanup_task is None or self._cleanup_task.done():
                 self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
+            # 曲库是本地资源，不依赖小米账号，无论是否登录都先扫出来。
+            # 之前放在账号检查之后，导致未配置账号/未选音箱时曲库永远为空。
+            await asyncio.to_thread(self.library.scan)
+            asyncio.create_task(asyncio.to_thread(self.library.attach_durations))
+
             if not (cfg.cookie or (cfg.account and cfg.password)):
                 self.last_error = "尚未配置小米账号（或 cookie）"
                 log.warning(self.last_error)
@@ -94,11 +99,6 @@ class AppState:
                 return False
 
             await self.auth.update_speakers_info()
-            # 扫描内部是同步 IO（os.walk/stat），曲库大时会卡住整个事件循环，放线程池
-            await asyncio.to_thread(self.library.scan)
-            # 读取时长要逐个打开文件，曲库大时会明显耗时，放到后台线程避免阻塞启动。
-            # 播放时会按需补读，所以这里晚一点完成也不影响使用。
-            asyncio.create_task(asyncio.to_thread(self.library.attach_durations))
 
             self._build_players()
 
