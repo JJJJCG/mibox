@@ -1,7 +1,9 @@
 services:
   mibox:
-    build: .
-    image: mibox:latest
+    # 直接用 GitHub Actions 构建好的镜像
+    image: ghcr.io/jjjjcg/mibox:latest
+    # 需要本地构建时，注释上面一行并取消下面一行注释
+    # build: .
     container_name: mibox
     # 必须用 host 网络：
     #   - SSDP 需绑定 UDP 1900 并加入 239.255.255.250 组播

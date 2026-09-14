@@ -17,10 +17,28 @@
 
 ## 快速开始
 
+### 方式一：用预构建镜像（推荐）
+
+每次推送到 `main` 后，GitHub Actions 会自动构建并发布到 GHCR：
+
+```bash
+docker pull ghcr.io/jjjjcg/mibox:latest
+```
+
 ```bash
 mkdir -p conf music
-# 编辑 docker-compose.yml，填入 MIBOX_HOSTNAME（宿主机局域网 IP）
+# 编辑 docker-compose.yml，确认 MIBOX_HOSTNAME 是宿主机局域网 IP
 docker compose up -d
+```
+
+可用标签：`latest`（main 分支）、`main`。
+
+### 方式二：本地构建
+
+把 `docker-compose.yml` 里的 `image:` 注释掉、打开 `build: .`，然后：
+
+```bash
+docker compose up -d --build
 ```
 
 打开 `http://192.168.31.145:8080`，在「配置」页填入小米账号（或 cookie）并保存，
