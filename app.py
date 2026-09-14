@@ -203,6 +203,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="mibox", version="0.1.0", lifespan=lifespan)
 
 
+# 注：曾尝试用 logging.Filter 静音前端轮询 /api/status 的访问日志，但 uvicorn
+# 会在 import 应用之后用 dictConfig 重建 logger 的 handler，过滤器安装时机难以
+# 稳定覆盖，故不再处理。前端已将轮询降到 5s 并在页面隐藏时暂停，日志量已足够少。
+
+
 # ==================== 前端 ====================
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -446,10 +451,26 @@ async def api_ha_save_rules(request: Request):
 
 
 @app.post("/api/ha/test")
-async def api_ha_test():
-    if not state.ha_client:
-        raise HTTPException(status_code=400, detail="HA 未启用或未配置")
-    ok, msg = await state.ha_client.test()
+async def api_ha_test(request: Request):
+    """用请求里带的配置（或当前配置）即时测试
+
+    不依赖已初始化的 HA 客户端，填完地址与令牌即可直接测，无需先重启服务。
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    url = (body.get("url") or state.config.ha_url or "").strip()
+    token = (body.get("token") or state.config.ha_token or "").strip()
+    if not url or not token:
+        raise HTTPException(status_code=400, detail="请先填写 HA 地址与令牌")
+
+    client = HAClient(url, token)
+    try:
+        ok, msg = await client.test()
+    finally:
+        await client.close()
     return {"ok": ok, "message": msg}
 
 

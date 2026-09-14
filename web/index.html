@@ -248,6 +248,8 @@ document.querySelectorAll('.tabs button').forEach(b=>{
 });
 
 async function refresh(){
+  // 页面在后台时不做轮询
+  if(document.hidden) return;
   try{
     const st = await api('/api/status');
     S.players = st.players || [];
@@ -368,7 +370,11 @@ async function doRestart(){
 }
 async function testHa(){
   try{
-    const r = await post('/api/ha/test');
+    // 带上输入框里的值，未保存也能直接测
+    const r = await post('/api/ha/test',{
+      url: document.getElementById('cfgHaUrl').value,
+      token: document.getElementById('cfgHaToken').value
+    });
     document.getElementById('haTestMsg').textContent = r.ok?('连接成功: '+r.message):('失败: '+r.message);
   }catch(e){ document.getElementById('haTestMsg').textContent = '失败: '+e.message; }
 }
@@ -451,7 +457,9 @@ loadLibrary().catch(()=>{});
 loadConfig().catch(()=>{});
 loadRules().catch(()=>{});
 loadDevices().catch(()=>{});
-setInterval(refresh, 3000);
+setInterval(refresh, 5000);
+// 页面重新可见时立刻刷新一次
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refresh(); });
 document.getElementById('selDevice').onchange = refresh;
 </script>
 </body>
