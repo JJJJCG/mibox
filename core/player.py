@@ -22,6 +22,7 @@ from .const import (
     PLAY_MODE_REPEAT_ALL,
     PLAY_MODE_REPEAT_ONE,
     PLAY_MODE_SHUFFLE,
+    USER_PAUSE_GRACE_SEC,
 )
 from .media import MediaService
 from .speaker import SpeakerController
@@ -69,6 +70,11 @@ class Player:
         self._monitor_task: Optional[asyncio.Task] = None
         self._deliver_at = 0.0        # 最近一次投递时间（宽限期内不判停）
 
+        # 暂停续播：小爱的 URL 播放没有 resume，只能记录位置后重新切片投递
+        self._paused_pos = 0.0
+        self._user_paused = False     # 是否由 mibox 主动暂停
+        self._pause_at = 0.0
+
     # ---------------- 内部 ----------------
     def _cancel_timer(self):
         if self._timer and not self._timer.done():
@@ -99,6 +105,8 @@ class Player:
         self.state = "playing"
         self.started_at = time.time()
         self._deliver_at = self.started_at
+        self._user_paused = False
+        self._paused_pos = 0.0
         self._schedule_next()
         log.info(f"[{self.speaker.name}] 播放: {item.name} ({item.duration}s)")
         return True
@@ -186,20 +194,67 @@ class Player:
             return
         self._cancel_timer()
         self._seq += 1
+        # 先记下暂停位置，resume 时按这个偏移重新切片
+        self._paused_pos = float(self.elapsed())
+        self._user_paused = True
+        self._pause_at = time.time()
         await self.controller.pause()
         self.state = "paused"
+        self.started_at = 0.0
+        log.info(f"[{self.speaker.name}] 暂停于 {int(self._paused_pos)}s")
 
     async def resume(self):
         if self.state != "paused":
             return
+        offset = int(self._paused_pos)
+        self._user_paused = False
+
+        # 能定位到本地音频文件就按暂停位置切片，实现真正的续播
+        if self.cur_item and offset > 2:
+            url = await self._seek_url_at(offset)
+            if url:
+                ok = await self.controller.play_url(url)
+                if ok:
+                    self.state = "playing"
+                    self.started_at = time.time() - offset
+                    self._deliver_at = time.time()
+                    remaining = max(1, (self.cur_item.duration or 0) - offset)
+                    self._schedule_next(wait=remaining)
+                    self._paused_pos = 0.0
+                    log.info(f"[{self.speaker.name}] 从 {offset}s 续播，剩余 {remaining}s")
+                    return
+                log.warning(f"[{self.speaker.name}] 续播投递失败，退回从头播放")
+
+        # 拿不到本地文件或切片失败：退回从头播放
+        self._paused_pos = 0.0
         if self.cur_item:
             await self._play_current()
+
+    async def _seek_url_at(self, offset: int) -> Optional[str]:
+        """找到当前曲目的本地文件并切片出 offset 秒之后的音频"""
+        try:
+            src = ""
+            song = getattr(self.cur_item, "song", None)
+            if song is not None and getattr(song, "path", ""):
+                src = song.path
+            else:
+                src = self.media.abs_path_of(self.cur_item.url)
+            if not src:
+                return None
+            return await self.media.make_seek_url(src, offset)
+        except Exception as e:
+            log.warning(f"生成续播切片失败: {e}")
+            return None
 
     async def stop(self):
         self._cancel_timer()
         self._seq += 1
         await self.controller.stop()
         self.state = "idle"
+        self.cur_item = None
+        self.started_at = 0.0
+        self._paused_pos = 0.0
+        self._user_paused = False
 
     async def set_volume(self, volume: int):
         self.volume = max(0, min(100, volume))
@@ -211,6 +266,8 @@ class Player:
     def elapsed(self) -> int:
         if self.state == "playing" and self.started_at:
             return int(time.time() - self.started_at)
+        if self.state == "paused":
+            return int(self._paused_pos)
         return 0
 
     def status(self) -> dict:
@@ -263,8 +320,18 @@ class Player:
                     log.info(f"[{self.speaker.name}] 音箱已被外部暂停，暂停队列计时")
                     self._cancel_timer()
                     self._seq += 1
+                    # 用音箱上报的位置作为续播点（拿不到就退回本地计时）
+                    self._paused_pos = float(st.get("position", 0) or self.elapsed())
+                    self._user_paused = False
+                    self.started_at = 0.0
                     self.state = "paused"
                 elif status == MI_STATUS_PLAYING and self.state == "paused":
+                    # mibox 自己刚按下暂停时，云端指令/静音兜底还在路上，
+                    # 此时音箱上报 PLAYING 属于延迟，不能当成"外部恢复播放"
+                    if self._user_paused and (
+                        time.time() - self._pause_at < USER_PAUSE_GRACE_SEC
+                    ):
+                        continue
                     pos = st.get("position", 0)
                     remaining = max(1, (self.cur_item.duration or 0) - pos)
                     log.info(

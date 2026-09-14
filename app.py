@@ -133,7 +133,7 @@ class AppState:
             if not sp.device_id:
                 log.warning(f"音箱 {sp.name or sp.did} 缺少 device_id，跳过")
                 continue
-            controller = SpeakerController(sp, self.auth)
+            controller = SpeakerController(sp, self.auth, self.media)
             player = Player(sp, controller, self.config, self.media)
             player.start_monitor()
             self.players[sp.did] = player

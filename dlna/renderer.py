@@ -113,6 +113,8 @@ class DLNARenderer:
     async def pause(self):
         if self.transport_state != TRANSPORT_STATE_PLAYING:
             return
+        # 先把进度固化到 offset，否则暂停后 GetPositionInfo 会归零
+        self.offset = self.position()
         if self.on_pause:
             await self.on_pause(self)
         self.transport_state = TRANSPORT_STATE_PAUSED

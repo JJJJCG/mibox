@@ -55,6 +55,10 @@ MI_STATUS_STOPPED = 0
 MI_STATUS_PLAYING = 1
 MI_STATUS_PAUSED = 2
 
+# 用户主动暂停后，这段时间内不把"音箱仍在播放"误判为外部恢复播放
+# （云端停止指令有延迟，静音兜底也需要几秒才生效）
+USER_PAUSE_GRACE_SEC = 20
+
 # ---------------- 音乐库 ----------------
 MUSIC_EXTENSIONS = {
     ".mp3", ".flac", ".wav", ".ape", ".ogg", ".m4a", ".aac", ".wma", ".opus",
