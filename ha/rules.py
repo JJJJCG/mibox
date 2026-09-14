@@ -22,6 +22,42 @@ def _fill(template, groups: tuple) -> object:
     return template
 
 
+_NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _to_number(v, groups: tuple):
+    """把字段值转成数字。
+
+    常见踩坑：规则 pattern 的第 1 个捕获组是动词（如
+    "空调(调到|设定)(\\\\d+)度"），{0} 替换出来的是动词而非数字。
+    此时自动在其余捕获组里找数字兜底，避免必然 400。
+    """
+    def _coerce(x):
+        try:
+            f = float(x)
+            return int(f) if f == int(f) else f
+        except (ValueError, TypeError):
+            return None
+
+    n = _coerce(v)
+    if n is not None:
+        return n
+    for g in groups:
+        if not g:
+            continue
+        m = _NUM_RE.search(g)
+        if m:
+            n = _coerce(m.group(0))
+            if n is not None:
+                log.warning(
+                    "数值字段得到非数字 '" + str(v) + "'——{0} 可能引用了动词"
+                    "捕获组，已自动改用捕获组里的数字 " + str(n)
+                    + "；建议 pattern 用 (?:...) 非捕获组、或把 {0} 改为 {1}"
+                )
+                return n
+    return v
+
+
 class RuleEngine:
     def __init__(self, client: HAClient, rules: list[dict] | None = None):
         self.client = client
@@ -68,15 +104,10 @@ class RuleEngine:
                 for k, v in (rule.get("data") or {}).items():
                     data[str(_fill(k, groups))] = _fill(v, groups)
 
-                # 数值字段转成数字发送；HA 的 number.set_value 要求 value 为数字，
-                # 字符串 "26" / "26.5" 在部分版本会被拒绝
+                # 数值字段转成数字发送；HA 的 number.set_value 要求 value 为数字
                 for key in ("brightness_pct", "temperature", "percentage", "position", "value"):
                     if key in data:
-                        try:
-                            fv = float(data[key])
-                            data[key] = int(fv) if fv == int(fv) else fv
-                        except (ValueError, TypeError):
-                            pass
+                        data[key] = _to_number(data[key], groups)
 
                 delay = int(rule.get("delay_minutes", 0) or 0)
                 if delay > 0:
