@@ -135,6 +135,7 @@ class AppState:
                 continue
             controller = SpeakerController(sp, self.auth)
             player = Player(sp, controller, self.config, self.media)
+            player.start_monitor()
             self.players[sp.did] = player
             log.info(f"播放器就绪: {sp.get_dlna_name()}")
         # 音量同步到默认音量

@@ -14,7 +14,15 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .config import Config, Speaker
-from .const import PLAY_MODE_NORMAL, PLAY_MODE_REPEAT_ALL, PLAY_MODE_REPEAT_ONE, PLAY_MODE_SHUFFLE
+from .const import (
+    MI_STATUS_PAUSED,
+    MI_STATUS_PLAYING,
+    MI_STATUS_STOPPED,
+    PLAY_MODE_NORMAL,
+    PLAY_MODE_REPEAT_ALL,
+    PLAY_MODE_REPEAT_ONE,
+    PLAY_MODE_SHUFFLE,
+)
 from .media import MediaService
 from .speaker import SpeakerController
 
@@ -58,6 +66,8 @@ class Player:
 
         self._timer: Optional[asyncio.Task] = None
         self._seq = 0                 # 防止旧定时器误触发
+        self._monitor_task: Optional[asyncio.Task] = None
+        self._deliver_at = 0.0        # 最近一次投递时间（宽限期内不判停）
 
     # ---------------- 内部 ----------------
     def _cancel_timer(self):
@@ -88,15 +98,17 @@ class Player:
 
         self.state = "playing"
         self.started_at = time.time()
+        self._deliver_at = self.started_at
         self._schedule_next()
         log.info(f"[{self.speaker.name}] 播放: {item.name} ({item.duration}s)")
         return True
 
-    def _schedule_next(self):
+    def _schedule_next(self, wait: float | None = None):
         self._cancel_timer()
         self._seq += 1
         seq = self._seq
-        wait = (self.cur_item.duration if self.cur_item else 0) + self.config.delay_sec
+        if wait is None:
+            wait = (self.cur_item.duration if self.cur_item else 0) + self.config.delay_sec
 
         async def _runner():
             try:
@@ -216,5 +228,61 @@ class Player:
             "queue": [i.to_dict() for i in self.queue[:50]],
         }
 
+    # ---------------- 真实状态对齐 ----------------
+    def start_monitor(self):
+        if self._monitor_task is None:
+            self._monitor_task = asyncio.create_task(self._monitor())
+
+    async def _monitor(self):
+        """对齐音箱真实状态，解决"外部停止/暂停后本地计时器还在跑"的问题
+
+        场景：用户对小爱说"停止"（小爱原生处理，mibox 不感知）、手机上
+        暂停、其他设备控制音箱——本地到点仍会自动切下一首。
+        这里每 5 秒核对一次真实状态并取消/恢复计时器。
+        """
+        try:
+            while True:
+                await asyncio.sleep(5)
+                if self.state == "idle" or self.cur_item is None:
+                    continue
+                # 刚投递完音箱可能还没真正开播，宽限期内不判停
+                if time.time() - self._deliver_at < 10:
+                    continue
+                try:
+                    st = await self.controller.get_status()
+                except Exception:
+                    continue
+                status = st.get("status", MI_STATUS_STOPPED)
+
+                if status == MI_STATUS_STOPPED and self.state == "playing":
+                    log.info(f"[{self.speaker.name}] 音箱已被外部停止，取消自动切歌")
+                    self._cancel_timer()
+                    self._seq += 1
+                    self.state = "idle"
+                elif status == MI_STATUS_PAUSED and self.state == "playing":
+                    log.info(f"[{self.speaker.name}] 音箱已被外部暂停，暂停队列计时")
+                    self._cancel_timer()
+                    self._seq += 1
+                    self.state = "paused"
+                elif status == MI_STATUS_PLAYING and self.state == "paused":
+                    pos = st.get("position", 0)
+                    remaining = max(1, (self.cur_item.duration or 0) - pos)
+                    log.info(
+                        f"[{self.speaker.name}] 音箱被外部恢复播放，"
+                        f"按剩余 {remaining}s 续接队列"
+                    )
+                    self.state = "playing"
+                    self.started_at = time.time() - pos
+                    self._schedule_next(wait=remaining)
+        except asyncio.CancelledError:
+            pass
+
     async def close(self):
         self._cancel_timer()
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._monitor_task = None
