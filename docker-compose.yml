@@ -1,0 +1,34 @@
+services:
+  mibox:
+    build: .
+    image: mibox:latest
+    container_name: mibox
+    # 必须用 host 网络：
+    #   - SSDP 需绑定 UDP 1900 并加入 239.255.255.250 组播
+    #   - LOCATION 里的 IP/端口必须是局域网真实地址
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # 音箱靠这个地址拼出音乐 URL，务必填宿主机的局域网 IP
+      MIBOX_HOSTNAME: 192.168.31.145
+      MIBOX_WEB_PORT: "8080"
+      MIBOX_DLNA_PORT: "8200"
+      MIBOX_MUSIC_PATH: /app/music
+      MIBOX_CONF_PATH: /app/conf
+      # 模块开关
+      MIBOX_ENABLE_DLNA: "true"
+      MIBOX_ENABLE_VOICE: "true"
+      MIBOX_ENABLE_HA: "false"
+      # 小米账号（二选一：账号密码 或 cookie）
+      # MIBOX_ACCOUNT: "your_account"
+      # MIBOX_PASSWORD: "your_password"
+      # MIBOX_COOKIE: "userId=xxx;passToken=xxx"
+      # MIBOX_MI_DID: "did1,did2"
+      # Home Assistant
+      # MIBOX_HA_URL: "http://192.168.31.x:8123"
+      # MIBOX_HA_TOKEN: "your_long_lived_token"
+      # MIBOX_VERBOSE: "true"
+    volumes:
+      - ./conf:/app/conf
+      - ./music:/app/music
