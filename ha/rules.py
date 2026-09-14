@@ -61,11 +61,13 @@ class RuleEngine:
             for k, v in (rule.get("data") or {}).items():
                 data[str(_fill(k, groups))] = _fill(v, groups)
 
-            # 数值字段做类型转换，HA 对字符串数字敏感
-            for key in ("brightness_pct", "temperature", "percentage", "position"):
+            # 数值字段转成数字发送；HA 的 number.set_value 要求 value 为数字，
+            # 字符串 "26" / "26.5" 在部分版本会被拒绝
+            for key in ("brightness_pct", "temperature", "percentage", "position", "value"):
                 if key in data:
                     try:
-                        data[key] = int(data[key])
+                        fv = float(data[key])
+                        data[key] = int(fv) if fv == int(fv) else fv
                     except (ValueError, TypeError):
                         pass
 

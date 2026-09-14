@@ -116,18 +116,6 @@ class CommandDispatcher:
             await player.prev()
             return
 
-        if action == "pause":
-            await player.pause()
-            return
-
-        if action == "resume":
-            await player.resume()
-            return
-
-        if action == "stop":
-            await player.stop()
-            return
-
         if action == "mode":
             player.set_mode(params.get("mode", PLAY_MODE_NORMAL))
             log.info(f"播放模式切换为 {player.mode}")
