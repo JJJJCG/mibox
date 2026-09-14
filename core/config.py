@@ -238,4 +238,10 @@ class Config:
             filtered = {k: v for k, v in data.items() if k in valid}
             cfg = cls(**filtered)
             cfg.conf_path = conf_path
-        return cfg
+            # __post_init__ 会让 MIBOX_* 环境变量参与构造；这里用文件值再覆盖
+            # 一遍，确立优先级：config.json > 环境变量 > 内置默认。否则在界面
+            # 上勾选/修改的配置会在重启时被 compose 里的旧环境变量静默改回
+            # （例如 MIBOX_ENABLE_HA=false 会让"HA 桥接"永远勾不上）。
+            for k, v in filtered.items():
+                setattr(cfg, k, v)
+            return cfg

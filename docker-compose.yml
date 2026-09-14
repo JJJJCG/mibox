@@ -18,10 +18,11 @@ services:
       MIBOX_DLNA_PORT: "8200"
       MIBOX_MUSIC_PATH: /app/music
       MIBOX_CONF_PATH: /app/conf
-      # 模块开关
-      MIBOX_ENABLE_DLNA: "true"
-      MIBOX_ENABLE_VOICE: "true"
-      MIBOX_ENABLE_HA: "false"
+      # 模块开关：仅作为首次启动的默认值。在 Web 界面保存过配置之后，
+      # 以 config.json 为准（界面里勾选的开关不会被这里的环境变量改回）。
+      # MIBOX_ENABLE_DLNA: "true"
+      # MIBOX_ENABLE_VOICE: "true"
+      # MIBOX_ENABLE_HA: "false"
       # 小米账号（二选一：账号密码 或 cookie）
       # MIBOX_ACCOUNT: "your_account"
       # MIBOX_PASSWORD: "your_password"
