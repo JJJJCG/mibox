@@ -194,6 +194,7 @@ input[type=range]{width:180px}
         <div><label>HA 地址</label><input type="text" id="cfgHaUrl" placeholder="http://192.168.31.x:8123"></div>
         <div><label>长期访问令牌</label><input type="password" id="cfgHaToken"></div>
       </div>
+      <div class="hint" id="haSaved"></div>
       <div class="controls">
         <button class="ghost" onclick="testHa()">测试连接</button>
         <span class="hint" id="haTestMsg"></span>
@@ -352,6 +353,11 @@ async function loadConfig(){
   document.getElementById('cfgHa').checked = c.enable_ha;
   document.getElementById('cfgPull').value = c.pull_ask_sec;
   document.getElementById('cfgHaUrl').value = c.ha_url||'';
+  // 敏感信息（密码/令牌/cookie）出于安全不回显，但明确告知已保存，避免误以为丢失
+  document.getElementById('cfgHaToken').placeholder = c.has_ha_token ? '已保存，重新输入可覆盖' : '';
+  document.getElementById('cfgPassword').placeholder = c.has_password ? '已保存，重新输入可覆盖' : '留空则不修改';
+  document.getElementById('cfgCookie').placeholder = c.has_cookie ? '已保存，重新输入可覆盖' : 'userId=xxx;passToken=xxx';
+  document.getElementById('haSaved').textContent = c.has_ha_token ? '令牌已保存在服务端（不回显）。' : '';
 }
 async function saveConfig(){
   const body = {
