@@ -43,7 +43,16 @@ class HAClient:
             async with session.post(url, headers=self._headers(), json=data or {}) as r:
                 if r.status >= 400:
                     text = await r.text()
-                    log.error(f"HA 调用失败 {domain}.{service}: {r.status} {text[:200]}")
+                    hint = {
+                        401: "令牌无效或过期",
+                        403: "令牌权限不足",
+                        404: "HA 地址或服务路径不存在",
+                        400: "参数或实体问题（常见：entity_id 拼错/实体不存在）",
+                    }.get(r.status, "")
+                    log.error(
+                        f"HA 调用失败: POST /api/services/{domain}/{service} "
+                        f"data={data} -> HTTP {r.status} {hint} | {text[:300]}"
+                    )
                     return False
                 log.info(f"HA 调用成功: {domain}.{service} {data or ''}")
                 return True

@@ -18,6 +18,12 @@ import re
 #   volume        需要 <num>
 #   fav_add / fav_del
 MUSIC_PATTERNS: list[tuple[str, str, dict]] = [
+    # "播放本地音乐XX / 播放本地XX / 播放音乐XX" 先于通用 "播放XX" 匹配，
+    # 避免"本地(音乐)"混进搜索词
+    (r"^播放本地音乐(?P<keyword>.+)$", "play_song", {}),
+    (r"^播放本地歌曲(?P<keyword>.+)$", "play_song", {}),
+    (r"^播放本地(?P<keyword>.+)$", "play_song", {}),
+    (r"^播放音乐(?P<keyword>.+)$", "play_song", {}),
     (r"^播放歌曲(?P<keyword>.+)$", "play_song", {}),
     (r"^播放歌单(?P<keyword>.+)$", "play_playlist", {}),
     (r"^播放收藏$", "play_favorites", {}),

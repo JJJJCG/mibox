@@ -14,6 +14,21 @@ from .music_cmds import match_music_command
 
 log = logging.getLogger("mibox")
 
+# 口播里可能混进搜索词的噪音前缀，搜索前剥掉
+_NOISE_PREFIX = ("本地音乐", "本地歌曲", "本地", "歌曲", "音乐")
+
+
+def _clean_keyword(kw: str) -> str:
+    kw = (kw or "").strip()
+    changed = True
+    while changed and kw:
+        changed = False
+        for n in _NOISE_PREFIX:
+            if kw.startswith(n):
+                kw = kw[len(n):].strip()
+                changed = True
+    return kw
+
 
 class CommandDispatcher:
     def __init__(self, config, players: dict[str, Player], library: MusicLibrary,
@@ -59,7 +74,10 @@ class CommandDispatcher:
         lib = self.library
 
         if action == "play_song":
-            kw = params.get("keyword", "")
+            kw = _clean_keyword(params.get("keyword", ""))
+            if not kw:
+                log.warning("语音里没有可搜索的歌名")
+                return
             songs = lib.search(kw, limit=20)
             if not songs:
                 log.warning(f"未在本地音乐库找到: {kw}")
