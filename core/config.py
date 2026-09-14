@@ -37,6 +37,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = _env(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass
 class Speaker:
     """单台小爱音箱的持久化配置"""
@@ -108,7 +118,7 @@ class Config:
 
     # 语音
     enable_voice: bool = True
-    pull_ask_sec: int = 1
+    pull_ask_sec: float = 1.5
     fuzzy_match_cutoff: float = 0.6
 
     # 模块开关
@@ -142,7 +152,7 @@ class Config:
         self.conf_path = _env("CONF_PATH", self.conf_path)
         self.music_path = _env("MUSIC_PATH", self.music_path)
         self.default_volume = _env_int("DEFAULT_VOLUME", self.default_volume)
-        self.pull_ask_sec = max(1, _env_int("PULL_ASK_SEC", self.pull_ask_sec))
+        self.pull_ask_sec = max(0.5, _env_float("PULL_ASK_SEC", self.pull_ask_sec))
         self.enable_voice = _env_bool("ENABLE_VOICE", self.enable_voice)
         self.enable_dlna = _env_bool("ENABLE_DLNA", self.enable_dlna)
         self.enable_ha = _env_bool("ENABLE_HA", self.enable_ha)

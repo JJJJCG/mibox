@@ -419,7 +419,8 @@ class DLNAServer:
         """定期核对音箱真实状态，修正 DLNA 状态漂移"""
         try:
             while True:
-                await asyncio.sleep(5)
+                # 10s：与 Player 状态对齐(5s)错开节奏，减少对小米接口的重复查询
+                await asyncio.sleep(10)
                 for r in self.renderers.values():
                     try:
                         if r.transport_state != TRANSPORT_STATE_PLAYING:

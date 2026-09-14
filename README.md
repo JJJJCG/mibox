@@ -138,7 +138,7 @@ web/     index.html（零构建单页）
 | `MIBOX_WEB_PORT` / `MIBOX_DLNA_PORT` | 端口 |
 | `MIBOX_ENABLE_DLNA` / `MIBOX_ENABLE_VOICE` / `MIBOX_ENABLE_HA` | 模块开关 |
 | `MIBOX_HA_URL` / `MIBOX_HA_TOKEN` | Home Assistant |
-| `MIBOX_PULL_ASK_SEC` | 语音轮询间隔，默认 1 |
+| `MIBOX_PULL_ASK_SEC` | 语音轮询间隔（秒，支持 0.5 步进），默认 1.5 |
 | `MIBOX_VERBOSE` | 调试日志 |
 
 ## 已知限制
