@@ -75,7 +75,8 @@ class MusicLibrary:
         except OSError as e:
             log.debug(f"曲库缓存写入失败: {e}")
 
-    async def scan(self) -> int:
+    def scan(self) -> int:
+        """扫描音乐目录（纯同步 IO，可放线程池执行，勿再加 async）"""
         root = self.config.music_path
         if not os.path.isdir(root):
             log.warning(f"音乐目录不存在: {root}")

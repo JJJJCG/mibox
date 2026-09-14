@@ -362,7 +362,8 @@ async def api_playlists():
 
 @app.post("/api/library/scan")
 async def api_scan():
-    n = await state.library.scan()
+    # scan 现在是同步函数，放线程池执行避免卡住事件循环
+    n = await asyncio.to_thread(state.library.scan)
     state.library.attach_durations()
     return {"ok": True, "count": n}
 
