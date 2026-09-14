@@ -41,8 +41,12 @@ docker compose up -d
 docker compose up -d --build
 ```
 
-打开 `http://192.168.31.145:8080`，在「配置」页填入小米账号（或 cookie）并保存，
-再到「设备」页勾选要接入的音箱，点击保存 —— 服务会自动重启并生效。
+打开 `http://192.168.31.145:8080`：
+
+1. 「配置」页点 **米家 App 扫码登录**，用米家 App 扫二维码（推荐，绕开短信验证）
+2. 「设备」页勾选要接入的音箱，点保存 —— 服务自动重启生效
+
+也可以手动填账号密码，或粘贴 cookie（`userId=xxx;passToken=xxx`）。
 
 ## 端口
 
@@ -59,7 +63,9 @@ docker compose up -d --build
 3. **部分型号不支持无损**：`L05B / L05C / LX06 / L16A` 遇到 flac 等格式会自动用 ffmpeg 转 mp3，
    转码结果缓存在 `conf/cache`。
 4. **投递模式**按型号自动选择（`play_by_url` 或 `play_by_music_url`），可在配置里逐台覆盖。
-5. 首次登录若反复触发短信验证，建议改用 cookie 方式（`userId=xxx;passToken=xxx`）。
+5. **优先用扫码登录**。它走米家（`sid=mijia`）拿到 `userId` + `passToken`，自动填入 Cookie，
+   再用 passToken 换取 `micoapi` 凭据——与 xiaomusic 的链路一致，可绕开账号密码常见的短信验证。
+   账号密码与手动粘贴 cookie 仍然保留作为兜底。
 
 ## 语音指令（内置，正则匹配）
 

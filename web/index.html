@@ -150,13 +150,24 @@ input[type=range]{width:180px}
   <section class="panel" id="tab-config">
     <div class="card">
       <h2>小米账号</h2>
-      <div class="row">
-        <div><label>账号</label><input type="text" id="cfgAccount"></div>
-        <div><label>密码</label><input type="password" id="cfgPassword" placeholder="留空则不修改"></div>
+
+      <div class="controls" style="margin-top:0">
+        <button class="primary" onclick="startQr()">米家 App 扫码登录</button>
+        <button class="ghost" onclick="cancelQr()">取消</button>
+        <span class="hint" id="qrMsg">推荐：用米家 App 扫码，可绕开短信验证</span>
       </div>
-      <label>Cookie（含 userId 与 passToken，推荐，可避免短信验证）</label>
+      <div id="qrBox" style="display:none;margin-top:14px">
+        <img id="qrImg" alt="扫码登录" style="width:200px;height:200px;border:1px solid var(--line);border-radius:8px;background:#fff">
+        <div class="hint" id="qrHint">等待扫码…</div>
+      </div>
+
+      <div class="row" style="margin-top:16px">
+        <div><label>账号（可选）</label><input type="text" id="cfgAccount"></div>
+        <div><label>密码（可选）</label><input type="password" id="cfgPassword" placeholder="留空则不修改"></div>
+      </div>
+      <label>Cookie（扫码成功后自动填入，也可手动粘贴）</label>
       <input type="text" id="cfgCookie" placeholder="userId=xxx;passToken=xxx">
-      <div class="hint">若账号密码登录频繁触发验证，请改用 cookie 方式。</div>
+      <div class="hint">扫码成功后会自动填入 userId 与 passToken，无需手动操作。</div>
     </div>
     <div class="card">
       <h2>网络与路径</h2>
@@ -357,6 +368,46 @@ async function testHa(){
     const r = await post('/api/ha/test');
     document.getElementById('haTestMsg').textContent = r.ok?('连接成功: '+r.message):('失败: '+r.message);
   }catch(e){ document.getElementById('haTestMsg').textContent = '失败: '+e.message; }
+}
+
+let qrTimer = null;
+async function startQr(){
+  const msg = document.getElementById('qrMsg');
+  msg.textContent = '正在获取二维码…';
+  try{
+    const r = await post('/api/qr/start');
+    if(r.status === 'error'){
+      msg.textContent = r.message || '获取二维码失败';
+      return;
+    }
+    document.getElementById('qrImg').src = r.qr;
+    document.getElementById('qrBox').style.display = 'block';
+    document.getElementById('qrHint').textContent = '等待扫码…';
+    msg.textContent = '';
+    if(qrTimer) clearInterval(qrTimer);
+    qrTimer = setInterval(pollQr, 1500);
+  }catch(e){ msg.textContent = '失败: ' + e.message; }
+}
+async function pollQr(){
+  try{
+    const r = await api('/api/qr/status');
+    document.getElementById('qrHint').textContent = r.message || '';
+    if(r.status === 'success'){
+      clearInterval(qrTimer); qrTimer = null;
+      document.getElementById('qrBox').style.display = 'none';
+      document.getElementById('qrMsg').textContent = '扫码成功，正在初始化设备…';
+      setTimeout(()=>{ refresh(); loadDevices(); }, 4000);
+    } else if(r.status === 'expired' || r.status === 'error'){
+      clearInterval(qrTimer); qrTimer = null;
+      document.getElementById('qrMsg').textContent = r.message || '扫码失败';
+    }
+  }catch(e){ /* 轮询抖动忽略 */ }
+}
+async function cancelQr(){
+  if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
+  await post('/api/qr/cancel');
+  document.getElementById('qrBox').style.display = 'none';
+  document.getElementById('qrMsg').textContent = '已取消';
 }
 
 const EXAMPLE = [

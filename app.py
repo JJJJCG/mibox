@@ -22,6 +22,7 @@ from core.const import LOG_NAME
 from core.library import MusicLibrary
 from core.media import MediaService
 from core.player import Player
+from core.qr_login import QRLogin
 from core.speaker import SpeakerController
 from dlna.server import DLNAServer
 from ha.client import HAClient
@@ -52,6 +53,8 @@ class AppState:
         self.ready = False
         self.last_error = ""
         self._cleanup_task: asyncio.Task | None = None
+        self.qr: QRLogin | None = None
+        self._qr_applied = False
 
     async def _cleanup_loop(self):
         """每小时清理一次 DLNA 推送产生的临时音频"""
@@ -151,6 +154,9 @@ class AppState:
         return await self.bootstrap()
 
     async def shutdown(self):
+        if self.qr:
+            await self.qr.cancel()
+            self.qr = None
         if self._cleanup_task:
             self._cleanup_task.cancel()
             try:
@@ -237,6 +243,45 @@ async def api_devices():
         }
         for d in devices
     ]
+
+
+# ==================== 扫码登录 ====================
+@app.post("/api/qr/start")
+async def api_qr_start():
+    """生成米家扫码登录二维码，并在后台等待扫码结果"""
+    if state.qr is None:
+        state.qr = QRLogin()
+    state._qr_applied = False
+    return await state.qr.start()
+
+
+@app.get("/api/qr/status")
+async def api_qr_status():
+    if state.qr is None:
+        return {"status": "idle", "message": "", "qr": "", "user_id": ""}
+
+    st = state.qr.state()
+
+    # 扫码成功：把 userId/passToken 落盘，然后用它重新走登录流程
+    if st["status"] == "success" and st["user_id"] and not state._qr_applied:
+        state._qr_applied = True
+        state.config.cookie = f"userId={st['user_id']};passToken={state.qr.pass_token}"
+        state.config.account = ""
+        state.config.password = ""
+        state.config.save()
+        log.info("扫码成功，已保存凭据并重新初始化")
+        asyncio.create_task(state.reinit())
+        st["message"] = "扫码成功，正在重新初始化…"
+
+    return st
+
+
+@app.post("/api/qr/cancel")
+async def api_qr_cancel():
+    if state.qr:
+        await state.qr.cancel()
+        state.qr = None
+    return {"ok": True}
 
 
 @app.get("/api/config")
