@@ -19,6 +19,36 @@ from .const import DIRECT_PLAY_FORMATS
 
 log = logging.getLogger("mibox")
 
+# 歌手/专辑标签在不同容器里键名各不相同：ID3 是 TPE1、MP4 是 ©ART、ASF 是
+# Author、Vorbis 与 APEv2 用小写的 artist/Artist。这里按优先级逐个试。
+_ARTIST_KEYS = (
+    "artist", "TPE1", "ARTIST", "Author", "\xa9ART",
+    "albumartist", "album_artist", "TPE2", "WM/AlbumArtist",
+)
+_ALBUM_KEYS = ("album", "TALB", "ALBUM", "WM/AlbumTitle", "\xa9alb")
+
+
+def _first_text(tags, keys) -> str:
+    """从标签里按 keys 顺序取第一个非空值，统一成字符串"""
+    if not tags:
+        return ""
+    for k in keys:
+        try:
+            v = tags.get(k)
+        except Exception:
+            continue
+        if v is None:
+            continue
+        # ID3 返回的是帧对象，正文在 .text 里
+        if hasattr(v, "text"):
+            v = v.text
+        if isinstance(v, (list, tuple)):
+            v = v[0] if v else ""
+        s = str(v).strip()
+        if s:
+            return s
+    return ""
+
 
 class MediaService:
     def __init__(self, config: Config):
@@ -34,18 +64,60 @@ class MediaService:
         """DLNA 推送内容的缓冲代理 URL"""
         return f"{self.config.base_url()}/proxy/{token}"
 
-    # ---------------- 时长 ----------------
-    def get_duration(self, abs_path: str) -> int:
-        """返回秒，失败返回 0"""
+    # ---------------- 元数据 ----------------
+    def get_meta(self, abs_path: str) -> dict:
+        """一次读时长 + 歌手/专辑，返回 {"duration","artist","album"}
+
+        mutagen 只读文件头，不整file解码，所以这里顺手把标签一起取了，
+        避免为了时长和歌手把同一个文件开两遍。任何异常都退化成空值。
+        """
+        meta = {"duration": 0, "artist": "", "album": ""}
         try:
             from mutagen import File
+        except Exception as e:  # 缺依赖时不影响播放
+            log.debug(f"未安装 mutagen，跳过元数据: {e}")
+            return meta
 
-            f = File(abs_path)
-            if f is not None and f.info is not None:
-                return int(f.info.length)
-        except Exception as e:
-            log.debug(f"读取时长失败 {abs_path}: {e}")
-        return 0
+        f = None
+        for kw in ({"easy": True}, {}):
+            try:
+                f = File(abs_path, **kw)
+            except Exception:
+                f = None
+            if f is not None:
+                break
+        if f is None:
+            return meta
+
+        try:
+            info = getattr(f, "info", None)
+            if info is not None:
+                meta["duration"] = int(info.length)
+        except Exception:
+            pass
+
+        tags = getattr(f, "tags", None)
+        meta["artist"] = _first_text(tags, _ARTIST_KEYS)
+        meta["album"] = _first_text(tags, _ALBUM_KEYS)
+
+        # easy 模式个别容器（APE/WMA 等）拿不到，用原始标签再试一轮
+        if not meta["artist"] or not meta["album"]:
+            try:
+                raw = File(abs_path)
+                raw_tags = getattr(raw, "tags", None) if raw is not None else None
+                if raw_tags:
+                    if not meta["artist"]:
+                        meta["artist"] = _first_text(raw_tags, _ARTIST_KEYS)
+                    if not meta["album"]:
+                        meta["album"] = _first_text(raw_tags, _ALBUM_KEYS)
+            except Exception:
+                pass
+
+        return meta
+
+    def get_duration(self, abs_path: str) -> int:
+        """返回秒，失败返回 0"""
+        return self.get_meta(abs_path)["duration"]
 
     # ---------------- 转码 ----------------
     def needs_conversion(self, speaker: Speaker, abs_path: str) -> bool:

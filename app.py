@@ -86,7 +86,7 @@ class AppState:
             # 曲库是本地资源，不依赖小米账号，无论是否登录都先扫出来。
             # 之前放在账号检查之后，导致未配置账号/未选音箱时曲库永远为空。
             await asyncio.to_thread(self.library.scan)
-            asyncio.create_task(asyncio.to_thread(self.library.attach_durations))
+            asyncio.create_task(asyncio.to_thread(self.library.attach_meta))
 
             if not (cfg.cookie or (cfg.account and cfg.password)):
                 self.last_error = "尚未配置小米账号（或 cookie）"
@@ -445,16 +445,42 @@ async def api_restart():
 
 # ==================== 音乐库 ====================
 @app.get("/api/library")
-async def api_library(q: str = "", limit: int = 100, offset: int = 0):
-    songs = state.library.search(q, limit=limit) if q else state.library.all()
+async def api_library(
+    q: str = "", folder: str = "", artist: str = "",
+    limit: int = 100, offset: int = 0,
+):
+    """曲库查询：q=关键词 / folder=文件夹 / artist=歌手，都不给就是全部歌曲"""
+    lib = state.library
+    if q:
+        songs = lib.search(q, limit=max(limit, 200))
+    elif folder:
+        songs = lib.by_folder(folder)
+    elif artist:
+        songs = lib.by_artist(artist)
+    else:
+        songs = lib.all()
     return {
-        "total": len(state.library.all()),
+        "total": len(songs),
+        "library_total": len(lib.all()),
         "songs": [s.to_dict() for s in songs[offset:offset + limit]],
     }
 
 
+@app.get("/api/folders")
+async def api_folders():
+    """文件夹（音乐目录下的子目录）-> 曲目数"""
+    return state.library.folders()
+
+
+@app.get("/api/artists")
+async def api_artists():
+    """歌手 -> 曲目数（歌手取自音频标签，无标签时按"歌手 - 歌名"猜）"""
+    return state.library.artists()
+
+
 @app.get("/api/playlists")
 async def api_playlists():
+    """歌单名 -> 曲目数（用户自定义歌单，不是子目录）"""
     return state.library.playlists()
 
 
@@ -462,7 +488,7 @@ async def api_playlists():
 async def api_scan():
     # scan 现在是同步函数，放线程池执行避免卡住事件循环
     n = await asyncio.to_thread(state.library.scan)
-    state.library.attach_durations()
+    state.library.attach_meta()
     return {"ok": True, "count": n}
 
 
@@ -471,10 +497,88 @@ async def api_favorites():
     return [s.to_dict() for s in state.library.favorite_songs()]
 
 
+# ---------------- 歌单 CRUD ----------------
+def _playlist_error(e: ValueError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/playlists")
+async def api_playlist_create(request: Request):
+    """新建歌单（body: {name}）；已存在时视为幂等成功"""
+    body = await request.json()
+    try:
+        name = state.library.create_playlist(body.get("name", ""))
+    except ValueError as e:
+        raise _playlist_error(e)
+    return {"ok": True, "name": name, "playlists": state.library.playlists()}
+
+
+@app.delete("/api/playlists/{name}")
+async def api_playlist_delete(name: str):
+    if not state.library.delete_playlist(name):
+        raise HTTPException(status_code=404, detail=f"没有歌单 {name}")
+    log.info(f"已删除歌单「{name}」")
+    return {"ok": True, "playlists": state.library.playlists()}
+
+
+@app.get("/api/playlists/{name}")
+async def api_playlist_songs(name: str):
+    if not state.library.has_playlist(name):
+        raise HTTPException(status_code=404, detail=f"没有歌单 {name}")
+    songs = state.library.playlist_songs(name)
+    return {
+        "name": name,
+        "total": len(songs),
+        "songs": [s.to_dict() for s in songs],
+    }
+
+
+@app.post("/api/playlists/{name}/songs")
+async def api_playlist_add(name: str, request: Request):
+    """往歌单里加歌（body: {song: 相对路径或歌名}）；歌单不存在会自动新建"""
+    body = await request.json()
+    song = (body.get("song") or "").strip()
+    if not song:
+        raise HTTPException(status_code=400, detail="缺少 song")
+    try:
+        real, added = state.library.add_to_playlist(name, song)
+    except ValueError as e:
+        raise _playlist_error(e)
+    songs = state.library.playlist_songs(real)
+    if added:
+        log.info(f"已把 {song} 加入歌单「{real}」")
+    return {
+        "ok": True,
+        "name": real,
+        "added": added,
+        "count": len(songs),
+        "playlists": state.library.playlists(),
+    }
+
+
+@app.post("/api/playlists/{name}/remove")
+async def api_playlist_remove(name: str, request: Request):
+    """从歌单里移除一首（body: {song}）。用 POST 而非 DELETE，避免带 body 的 DELETE"""
+    body = await request.json()
+    song = (body.get("song") or "").strip()
+    if not song:
+        raise HTTPException(status_code=400, detail="缺少 song")
+    ok = state.library.remove_from_playlist(name, song)
+    return {
+        "ok": ok,
+        "name": name,
+        "count": len(state.library.playlist_songs(name)),
+        "playlists": state.library.playlists(),
+    }
+
+
 # ==================== 播放控制 ====================
 @app.post("/api/player/{did}/play")
 async def api_play(did: str, request: Request):
-    """body: {keyword?, song?, playlist?, favorites?}"""
+    """body: {keyword? | song? | folder? | artist? | playlist? | favorites? | index?}
+
+    song 可以是相对路径（界面按列表点播）或歌名（沿用旧的调用方式）。
+    """
     body = await request.json()
     player = state.player(did)
     lib = state.library
@@ -491,8 +595,13 @@ async def api_play(did: str, request: Request):
         songs = lib.favorite_songs()
     elif body.get("playlist"):
         songs = lib.by_playlist(body["playlist"])
+    elif body.get("folder"):
+        songs = lib.by_folder(body["folder"])
+    elif body.get("artist"):
+        songs = lib.by_artist(body["artist"])
     elif body.get("song"):
-        songs = [lib.get(body["song"])] if lib.get(body["song"]) else []
+        one = lib.resolve(body["song"])
+        songs = [one] if one else []
     elif body.get("keyword"):
         songs = lib.search(body["keyword"], limit=30)
     else:

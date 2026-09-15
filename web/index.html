@@ -54,6 +54,29 @@ tr.clickable:hover{background:var(--accent-soft)}
 input[type=range]{width:180px}
 .mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
 .empty{color:var(--muted);font-size:13px;padding:16px 0}
+/* 音乐库：四个标签 + 分组表 + 行内操作 */
+.libtabs{margin:0 0 12px}
+.libtabs button{padding:6px 14px;font-size:13px}
+.libview{display:none}
+.libview.active{display:block}
+.songtable td,.grouptable td{vertical-align:middle}
+.grouptable .gname{font-weight:500}
+.ops{white-space:nowrap;text-align:right}
+button.mini{padding:4px 10px;font-size:12px}
+button.danger{color:var(--err)}
+.pickmenu{position:fixed;z-index:60;background:var(--card);border:1px solid var(--line);
+  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;
+  min-width:180px;max-height:300px;overflow:auto;display:none}
+.pickmenu button{display:block;width:100%;text-align:left;background:none;border:none;
+  padding:7px 10px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--text)}
+.pickmenu button:hover{background:var(--accent-soft)}
+.pickmenu .sep{height:1px;background:var(--line);margin:5px 0}
+.toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,12px);z-index:70;
+  background:#1f2937;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
+  transition:opacity .18s,transform .18s;max-width:70vw}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.err{background:var(--err)}
 </style>
 </head>
 <body>
@@ -67,7 +90,7 @@ input[type=range]{width:180px}
 </header>
 
 <main>
-  <div class="tabs">
+  <div class="tabs" id="mainTabs">
     <button class="active" data-tab="play">播放</button>
     <button data-tab="library">音乐库</button>
     <button data-tab="devices">设备</button>
@@ -100,12 +123,13 @@ input[type=range]{width:180px}
       </div>
       <div class="controls">
         <span class="hint">模式</span>
-        <select id="selMode" style="max-width:160px" onchange="setMode(this.value)">
-          <option value="NORMAL">顺序播放</option>
-          <option value="REPEAT_ONE">单曲循环</option>
-          <option value="REPEAT_ALL">全部循环</option>
-          <option value="SHUFFLE">随机播放</option>
+        <select id="selMode" style="max-width:210px" onchange="setMode(this.value)">
+          <option value="NORMAL">顺序播放 · 放完即停</option>
+          <option value="REPEAT_ONE">单曲循环 · 这首重放</option>
+          <option value="REPEAT_ALL">全部循环 · 放完重头</option>
+          <option value="SHUFFLE">随机播放 · 放完即停</option>
         </select>
+        <span class="hint">顺序与随机都是「列表放完就停」，只有全部循环会回头接着放</span>
       </div>
     </div>
     <div class="card">
@@ -119,17 +143,57 @@ input[type=range]{width:180px}
     <div class="card">
       <h2>搜索与点播</h2>
       <div class="row">
-        <div><input type="text" id="kw" placeholder="歌名关键词，回车播放" onkeydown="if(event.key==='Enter')playKw()"></div>
+        <div><input type="text" id="kw" placeholder="歌名 / 歌手关键词，回车播放" onkeydown="if(event.key==='Enter')playKw()"></div>
         <div style="flex:0 0 auto"><button class="primary" onclick="playKw()">播放</button></div>
       </div>
       <div class="controls">
         <button class="ghost" onclick="rescan()">重新扫描音乐库</button>
-        <span class="hint">歌单按音乐目录下的子目录自动划分</span>
+        <span class="hint">文件夹＝音乐目录下的子目录；歌手取自音频标签；歌单可自己攒</span>
       </div>
     </div>
+
     <div class="card">
-      <h2>全部歌曲 <span class="hint" id="libCount"></span></h2>
-      <table><tbody id="songList"></tbody></table>
+      <div class="tabs libtabs" id="libTabs">
+        <button class="active" data-lib="songs">所有歌曲</button>
+        <button data-lib="folders">文件夹</button>
+        <button data-lib="artists">歌手</button>
+        <button data-lib="playlists">歌单</button>
+      </div>
+
+      <!-- 所有歌曲 -->
+      <div class="libview active" id="lib-songs">
+        <h2>所有歌曲 <span class="hint" id="libCount"></span></h2>
+        <table class="songtable"><tbody id="songList"></tbody></table>
+      </div>
+
+      <!-- 文件夹 -->
+      <div class="libview" id="lib-folders">
+        <h2>文件夹 <span class="hint" id="folderCount"></span></h2>
+        <div class="hint">对应「播放文件夹XX」，选父目录会连子目录一起播。</div>
+        <table class="grouptable" style="margin-top:6px"><tbody id="folderList"></tbody></table>
+        <div id="folderSongs"></div>
+      </div>
+
+      <!-- 歌手 -->
+      <div class="libview" id="lib-artists">
+        <h2>歌手 <span class="hint" id="artistCount"></span></h2>
+        <div class="hint">对应「播放歌手XX」。没有歌手标签的曲目会归到「未知歌手」。</div>
+        <table class="grouptable" style="margin-top:6px"><tbody id="artistList"></tbody></table>
+        <div id="artistSongs"></div>
+      </div>
+
+      <!-- 歌单 -->
+      <div class="libview" id="lib-playlists">
+        <h2>歌单 <span class="hint" id="plCount"></span></h2>
+        <div class="hint">对应「播放歌单XX」。任意标签下的歌曲都能用行尾的「加入歌单」收进来。</div>
+        <div class="controls">
+          <input type="text" id="newPlName" placeholder="新歌单名" style="max-width:220px"
+                 onkeydown="if(event.key==='Enter')createPlaylist()">
+          <button class="ghost" onclick="createPlaylist()">新建歌单</button>
+        </div>
+        <table class="grouptable"><tbody id="playlistList"></tbody></table>
+        <div id="plSongs"></div>
+      </div>
     </div>
   </section>
 
@@ -288,7 +352,8 @@ input[type=range]{width:180px}
 </main>
 
 <script>
-let S = {players:[], devices:[], curDid:null, lastLibCount:null, lastLogin:null};
+let S = {players:[], devices:[], curDid:null, lastLibCount:null, lastLogin:null, playlistCounts:{}};
+let activeLib = 'songs';   // 音乐库当前标签：songs | folders | artists | playlists
 
 async function api(url, opts){
   const r = await fetch(url, opts);
@@ -297,9 +362,9 @@ async function api(url, opts){
 }
 const post = (u,b) => api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
 
-document.querySelectorAll('.tabs button').forEach(b=>{
+document.querySelectorAll('#mainTabs button').forEach(b=>{
   b.onclick = () => {
-    document.querySelectorAll('.tabs button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('#mainTabs button').forEach(x=>x.classList.remove('active'));
     document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
     b.classList.add('active');
     document.getElementById('tab-'+b.dataset.tab).classList.add('active');
@@ -308,6 +373,27 @@ document.querySelectorAll('.tabs button').forEach(b=>{
     if(t === 'library'){ loadLibrary().catch(()=>{}); }
   };
 });
+
+// 音乐库里的四个标签：所有歌曲 / 文件夹 / 歌手 / 歌单
+document.querySelectorAll('#libTabs button').forEach(b=>{
+  b.onclick = () => {
+    document.querySelectorAll('#libTabs button').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.libview').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    activeLib = b.dataset.lib;
+    document.getElementById('lib-'+activeLib).classList.add('active');
+    loadLibrary().catch(e=>toast('读取失败: '+e.message, true));
+  };
+});
+
+// 点空白处 / 按 Esc 收起「加入歌单」菜单
+document.addEventListener('click', e=>{
+  const m = document.getElementById('pickMenu');
+  if(m.style.display === 'block' && !m.contains(e.target) && !e.target.closest('.addpick')){
+    closePick();
+  }
+});
+document.addEventListener('keydown', e=>{ if(e.key === 'Escape') closePick(); });
 
 async function refresh(){
   // 页面在后台时不做轮询
@@ -353,12 +439,16 @@ function setBadge(id, text, cls){
 
 function renderPlayer(p){
   if(!p) return;
-  document.getElementById('nowTitle').textContent = p.current ? p.current.name : '—';
-  document.getElementById('nowMeta').textContent =
-    `状态 ${p.state} · ${p.index+1}/${p.total}` +
-    (p.status_source === 'home_assistant'
-      ? ` · 控制与状态: HA ${(p.ha_entity||'').replace('media_player.','')}`
-      : ' · 控制与状态: 小米 API');
+  // 队列还在但已经没有在播的曲目 = 顺序/随机模式把列表放完了
+  const done = !p.current && p.total > 0;
+  document.getElementById('nowTitle').textContent = p.current
+    ? p.current.name : (done ? '列表已播放完毕' : '—');
+  document.getElementById('nowMeta').textContent = done
+    ? `共 ${p.total} 首，已放完 · 想一直放就把模式改成「全部循环」`
+    : `状态 ${p.state} · ${p.index+1}/${p.total}` +
+      (p.status_source === 'home_assistant'
+        ? ` · 控制与状态: HA ${(p.ha_entity||'').replace('media_player.','')}`
+        : ' · 控制与状态: 小米 API');
   document.getElementById('vol').value = p.volume;
   document.getElementById('volVal').textContent = p.volume;
   document.getElementById('selMode').value = p.mode;
@@ -378,23 +468,212 @@ async function setMode(m){ await post(`/api/player/${S.curDid}/mode`,{mode:m}); 
 async function jump(i){ await post(`/api/player/${S.curDid}/play`,{index:i}); refresh(); }
 
 async function loadLibrary(){
-  const d = await api('/api/library?limit=200');
-  document.getElementById('libCount').textContent = `共 ${d.total} 首`;
-  document.getElementById('songList').innerHTML = d.songs.map((s,i)=>
-    `<tr class="clickable" onclick="playSong('${encodeURIComponent(s.name)}')">
-      <td>${i+1}</td><td>${s.name}</td><td>${s.folder}</td></tr>`).join('');
+  // 歌单名列表随时保持最新，「加入歌单」菜单在任何一个标签下都要能用
+  try{ S.playlistCounts = await api('/api/playlists'); }
+  catch(e){ S.playlistCounts = S.playlistCounts || {}; }
+
+  if(activeLib === 'songs'){
+    const d = await api('/api/library?limit=500');
+    document.getElementById('libCount').textContent = `共 ${d.library_total} 首`;
+    document.getElementById('songList').innerHTML = songRows(d.songs);
+  } else if(activeLib === 'folders' || activeLib === 'artists'){
+    const kind = activeLib === 'folders' ? 'folder' : 'artist';
+    const map = await api(activeLib === 'folders' ? '/api/folders' : '/api/artists');
+    renderGroups(kind, map);
+  } else {
+    renderPlaylists(S.playlistCounts);
+  }
 }
-async function playSong(name){
-  await post(`/api/player/${S.curDid}/play`,{song:decodeURIComponent(name)});
+
+/* ---------- 通用行渲染 ---------- */
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function songRows(songs, fromPlaylist){
+  if(!songs || !songs.length) return '<tr><td class="hint">没有曲目</td></tr>';
+  return songs.map((s,i)=>`<tr>
+    <td>${i+1}</td>
+    <td>${esc(s.name)}</td>
+    <td>${esc(s.artist)}</td>
+    <td class="hint">${esc(s.folder)}</td>
+    <td class="mono">${s.duration?fmt(s.duration):'--:--'}</td>
+    <td class="ops">
+      <button class="ghost mini" onclick="playSong(this)" data-rel="${esc(s.rel)}">播放</button>
+      ${fromPlaylist
+        ? `<button class="ghost mini" onclick="removeFromPlaylist(this)" data-rel="${esc(s.rel)}" data-pl="${esc(fromPlaylist)}">移出</button>`
+        : `<button class="ghost mini addpick" onclick="pickPlaylist(this)" data-rel="${esc(s.rel)}" data-name="${esc(s.name)}">加入歌单</button>`}
+    </td></tr>`).join('');
+}
+function renderGroups(kind, map){
+  const names = Object.keys(map||{});
+  const label = kind === 'folder' ? '文件夹' : '歌手';
+  const total = names.reduce((a,n)=>a+map[n], 0);
+  document.getElementById(kind+'Count').textContent =
+    names.length ? `${names.length} 个${label} · 共 ${total} 首` : '';
+  document.getElementById(kind+'List').innerHTML = names.length
+    ? names.map(n=>`<tr>
+        <td class="gname">${esc(n)}</td>
+        <td class="hint">${map[n]} 首</td>
+        <td class="ops" style="width:190px">
+          <button class="ghost mini" onclick="playGroup(this)" data-kind="${kind}" data-name="${esc(n)}">播放</button>
+          <button class="ghost mini tgl" onclick="toggleGroup(this)" data-kind="${kind}" data-name="${esc(n)}">展开</button>
+        </td></tr>`).join('')
+    : `<tr><td class="hint">曲库为空，先扫描音乐目录</td></tr>`;
+  document.getElementById(kind+'Songs').innerHTML = '';
+}
+function renderPlaylists(map){
+  const names = Object.keys(map||{});
+  document.getElementById('plCount').textContent = names.length ? `共 ${names.length} 个` : '';
+  document.getElementById('playlistList').innerHTML = names.length
+    ? names.map(n=>`<tr>
+        <td class="gname">${esc(n)}</td>
+        <td class="hint">${map[n]} 首</td>
+        <td class="ops" style="width:250px">
+          <button class="ghost mini" onclick="playPlaylist(this)" data-name="${esc(n)}">播放</button>
+          <button class="ghost mini" onclick="openPlaylist(this)" data-name="${esc(n)}">查看</button>
+          <button class="ghost mini danger" onclick="deletePlaylist(this)" data-name="${esc(n)}">删除</button>
+        </td></tr>`).join('')
+    : `<tr><td class="hint">还没有歌单，上面新建一个</td></tr>`;
+  document.getElementById('plSongs').innerHTML = '';
+}
+
+/* ---------- 播放 ---------- */
+async function playSong(btn){
+  await post(`/api/player/${S.curDid}/play`,{song: btn.dataset.rel});
   refresh();
+}
+async function playGroup(btn){
+  const key = btn.dataset.kind === 'folder' ? 'folder' : 'artist';
+  try{
+    await post(`/api/player/${S.curDid}/play`, {[key]: btn.dataset.name});
+    toast(`开始播放「${btn.dataset.name}」`);
+    refresh();
+  }catch(e){ toast('播放失败: '+e.message, true); }
+}
+async function playPlaylist(btn){
+  try{
+    await post(`/api/player/${S.curDid}/play`, {playlist: btn.dataset.name});
+    toast(`开始播放歌单「${btn.dataset.name}」`);
+    refresh();
+  }catch(e){ toast('播放失败: '+e.message, true); }
+}
+async function toggleGroup(btn){
+  const box = document.getElementById(btn.dataset.kind+'Songs');
+  if(btn.dataset.open === '1'){
+    btn.dataset.open = ''; btn.textContent = '展开'; box.innerHTML = ''; return;
+  }
+  // 同一时间只摊开一组，免得页面上到处都是歌曲表
+  const list = document.getElementById(btn.dataset.kind+'List');
+  list.querySelectorAll('.tgl').forEach(b=>{ b.dataset.open=''; b.textContent='展开'; });
+  const q = `${btn.dataset.kind}=${encodeURIComponent(btn.dataset.name)}&limit=500`;
+  const d = await api('/api/library?'+q);
+  box.innerHTML = `<div class="hint" style="margin:12px 0 4px">「${esc(btn.dataset.name)}」· ${d.total} 首</div>
+    <table class="songtable">${songRows(d.songs)}</table>`;
+  btn.dataset.open = '1'; btn.textContent = '收起';
 }
 async function playKw(){
   const kw = document.getElementById('kw').value.trim();
   if(!kw) return;
-  await post(`/api/player/${S.curDid}/play`,{keyword:kw});
-  refresh();
+  try{
+    await post(`/api/player/${S.curDid}/play`,{keyword:kw});
+    refresh();
+  }catch(e){ toast('没有匹配的歌曲', true); }
 }
-async function rescan(){ await post('/api/library/scan'); loadLibrary(); refresh(); }
+async function rescan(){
+  toast('正在扫描音乐目录…');
+  await post('/api/library/scan');
+  await loadLibrary();
+  refresh();
+  toast('扫描完成');
+}
+
+/* ---------- 歌单 ---------- */
+async function createPlaylist(){
+  const el = document.getElementById('newPlName');
+  const name = el.value.trim();
+  if(!name){ toast('请先填歌单名', true); return; }
+  try{
+    await post('/api/playlists', {name});
+    el.value = '';
+    toast(`已新建歌单「${name}」`);
+    await loadLibrary();
+  }catch(e){ toast('新建失败: '+e.message, true); }
+}
+async function deletePlaylist(btn){
+  const name = btn.dataset.name;
+  if(!confirm(`删除歌单「${name}」？\n只删这个歌单，不会删任何音乐文件。`)) return;
+  try{
+    await api(`/api/playlists/${encodeURIComponent(name)}`, {method:'DELETE'});
+    toast(`已删除歌单「${name}」`);
+    await loadLibrary();
+  }catch(e){ toast('删除失败: '+e.message, true); }
+}
+async function openPlaylist(btn){
+  const name = btn.dataset.name;
+  try{
+    const d = await api(`/api/playlists/${encodeURIComponent(name)}`);
+    document.getElementById('plSongs').innerHTML =
+      `<div class="hint" style="margin:12px 0 4px">歌单「${esc(name)}」· ${d.total} 首</div>` +
+      (d.total ? `<table class="songtable">${songRows(d.songs, name)}</table>`
+               : '<div class="empty">这个歌单还是空的</div>');
+  }catch(e){ toast('读取失败: '+e.message, true); }
+}
+async function removeFromPlaylist(btn){
+  try{
+    await post(`/api/playlists/${encodeURIComponent(btn.dataset.pl)}/remove`, {song: btn.dataset.rel});
+    toast('已移出歌单');
+    await loadLibrary();
+    await openPlaylist({dataset:{name: btn.dataset.pl}});
+  }catch(e){ toast('移出失败: '+e.message, true); }
+}
+
+/* ---------- 加入歌单的弹出菜单 ---------- */
+let PICK_REL = '';
+function pickPlaylist(btn){
+  PICK_REL = btn.dataset.rel;
+  const m = document.getElementById('pickMenu');
+  const names = Object.keys(S.playlistCounts||{});
+  m.innerHTML = (names.length
+      ? names.map(n=>`<button onclick="pickChoose(this)" data-name="${esc(n)}">${esc(n)}
+           <span class="hint">${S.playlistCounts[n]} 首</span></button>`).join('')
+      : '<div class="hint" style="padding:6px 10px">还没有歌单，先新建一个</div>')
+    + '<div class="sep"></div><button onclick="pickNew()">＋ 新建歌单…</button>';
+  m.style.display = 'block';
+  // 贴着按钮右下角展开，靠近视口边缘时向内收
+  const r = btn.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  let x = Math.min(r.left, window.innerWidth - w - 8);
+  let y = r.bottom + 6;
+  if(y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 6);
+  m.style.left = Math.max(8, x) + 'px';
+  m.style.top = y + 'px';
+}
+function closePick(){ document.getElementById('pickMenu').style.display = 'none'; }
+async function pickChoose(btn){ await addToPlaylist(btn.dataset.name, PICK_REL); }
+async function pickNew(){
+  const n = prompt('新歌单名：');
+  if(!n || !n.trim()) return;
+  await addToPlaylist(n.trim(), PICK_REL);
+}
+async function addToPlaylist(name, rel){
+  closePick();
+  try{
+    const r = await post(`/api/playlists/${encodeURIComponent(name)}/songs`, {song: rel});
+    S.playlistCounts = r.playlists || S.playlistCounts;
+    toast(r.added ? `已加入歌单「${r.name}」` : `「${r.name}」里已经有这首歌了`);
+    if(activeLib === 'playlists') await loadLibrary();
+  }catch(e){ toast('加入失败: '+e.message, true); }
+}
+
+/* ---------- 轻提示 ---------- */
+let toastTimer = null;
+function toast(msg, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ el.className = 'toast'; }, 2400);
+}
 
 let HA_ENTITIES = [];
 async function loadHaEntities(){
@@ -620,5 +899,7 @@ setInterval(refresh, 5000);
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refresh(); });
 document.getElementById('selDevice').onchange = refresh;
 </script>
+<div id="pickMenu" class="pickmenu"></div>
+<div id="toast" class="toast"></div>
 </body>
 </html>

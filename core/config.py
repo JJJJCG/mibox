@@ -275,22 +275,27 @@ class Config:
         conf_path = conf_path or _env("CONF_PATH", "/app/conf")
         cfg = cls(conf_path=conf_path)
         path = cfg.config_file
-        if os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    data = json.load(f)
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning(f"配置文件解析失败，使用默认配置: {e}")
-                return cfg
-            data.pop("conf_path", None)
-            valid = set(inspect.signature(cls.__init__).parameters)
-            filtered = {k: v for k, v in data.items() if k in valid}
-            cfg = cls(**filtered)
-            cfg.conf_path = conf_path
-            # __post_init__ 会让 MIBOX_* 环境变量参与构造；这里用文件值再覆盖
-            # 一遍，确立优先级：config.json > 环境变量 > 内置默认。否则在界面
-            # 上勾选/修改的配置会在重启时被 compose 里的旧环境变量静默改回
-            # （例如 MIBOX_ENABLE_HA=false 会让"HA 桥接"永远勾不上）。
-            for k, v in filtered.items():
-                setattr(cfg, k, v)
+        # 全新部署时 conf/ 是空的，没有 config.json；这里必须显式返回用
+        # 环境变量 + 默认值构造的实例。早先这段写成 `if os.path.exists(): ...`，
+        # 文件不存在时函数会走到末尾隐式返回 None，调用方拿到 None 后
+        # 访问 config.cache_dir 直接 AttributeError，服务起不来。
+        if not os.path.exists(path):
             return cfg
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning(f"配置文件解析失败，使用默认配置: {e}")
+            return cfg
+        data.pop("conf_path", None)
+        valid = set(inspect.signature(cls.__init__).parameters)
+        filtered = {k: v for k, v in data.items() if k in valid}
+        cfg = cls(**filtered)
+        cfg.conf_path = conf_path
+        # __post_init__ 会让 MIBOX_* 环境变量参与构造；这里用文件值再覆盖
+        # 一遍，确立优先级：config.json > 环境变量 > 内置默认。否则在界面
+        # 上勾选/修改的配置会在重启时被 compose 里的旧环境变量静默改回
+        # （例如 MIBOX_ENABLE_HA=false 会让"HA 桥接"永远勾不上）。
+        for k, v in filtered.items():
+            setattr(cfg, k, v)
+        return cfg

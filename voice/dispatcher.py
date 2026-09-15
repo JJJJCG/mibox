@@ -96,6 +96,24 @@ class CommandDispatcher:
             await player.play_songs(songs)
             return
 
+        if action == "play_folder":
+            kw = (params.get("keyword", "") or "").strip()
+            songs = lib.by_folder(kw)
+            if not songs:
+                log.warning(f"未找到文件夹: {kw}")
+                return
+            await player.play_songs(songs)
+            return
+
+        if action == "play_artist":
+            kw = (params.get("keyword", "") or "").strip()
+            songs = lib.by_artist(kw)
+            if not songs:
+                log.warning(f"未找到歌手: {kw}")
+                return
+            await player.play_songs(songs)
+            return
+
         if action == "play_playlist":
             kw = params.get("keyword", "")
             songs = lib.by_playlist(kw)
@@ -134,6 +152,25 @@ class CommandDispatcher:
 
         if action == "volume":
             await player.set_volume(params.get("num", self.config.default_volume))
+            return
+
+        if action == "playlist_add":
+            name = (params.get("keyword", "") or "").strip()
+            if not name:
+                log.warning("语音里没有歌单名")
+                return
+            if not player.cur_item or not player.cur_item.song:
+                log.warning("当前没有在播的本地歌曲，无法加入歌单")
+                return
+            song = player.cur_item.song
+            try:
+                real, added = lib.add_to_playlist(name, song.rel)
+            except ValueError as e:
+                log.warning(f"加入歌单失败: {e}")
+                return
+            log.info(
+                f"{'已加入' if added else '已在'}歌单「{real}」: {song.name}"
+            )
             return
 
         if action == "fav_add":

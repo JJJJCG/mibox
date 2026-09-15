@@ -172,12 +172,23 @@ class Player:
 
         nxt = self.index + 1
         if nxt >= len(self.queue):
-            if self.mode == PLAY_MODE_REPEAT_ALL or auto:
+            # 只有「全部循环」才回头接着放；顺序 / 随机播放到列表尾就停。
+            # 这里以前写的是 `if mode == REPEAT_ALL or auto`——自动续播时无条件
+            # 回到第一首，于是"顺序播放"也变成了永远循环，界面上就找不到
+            # "列表放完即停"这个选项了。
+            if self.mode == PLAY_MODE_REPEAT_ALL:
                 nxt = 0
             else:
+                log.info(
+                    f"[{self.speaker.name}] 队列播放完毕（{self.mode}），停止"
+                )
                 self.state = "idle"
                 self.cur_item = None
-                self.index = 0
+                self.started_at = 0.0
+                self._paused_pos = 0.0
+                self._user_paused = False
+                # index 留在最后一首，不再像以前那样重置成 0（重置会让界面
+                # 显示 1/N 却什么都没有，而且下次"下一首"会从第二首开始）
                 return
 
         self.index = nxt

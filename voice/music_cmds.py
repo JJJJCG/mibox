@@ -10,13 +10,19 @@ import re
 # (正则, 动作, 说明)
 # 动作：
 #   play_song     需要 <keyword>  搜索并播放
-#   play_playlist 需要 <keyword>  播放歌单（子目录）
+#   play_folder   需要 <keyword>  播放文件夹（音乐目录下的子目录）
+#   play_artist   需要 <keyword>  播放某歌手的全部曲目
+#   play_playlist 需要 <keyword>  播放歌单（用户自定义，找不到时回落文件夹）
 #   play_favorites              播放收藏
 #   play_index    需要 <num>     播放当前列表第 N 首
+#   playlist_add  需要 <keyword> 把当前播放的歌加入某歌单
 #   next / prev / pause / resume / stop
 #   mode          需要 <mode>
 #   volume        需要 <num>
 #   fav_add / fav_del
+#
+# 注意顺序：带前缀的指令（文件夹/歌手/歌单）必须排在通用 "^播放(.+)$" 之前，
+# 否则会被它整句吃掉当成歌名。
 MUSIC_PATTERNS: list[tuple[str, str, dict]] = [
     # "播放本地音乐XX / 播放本地XX / 播放音乐XX" 先于通用 "播放XX" 匹配，
     # 避免"本地(音乐)"混进搜索词
@@ -25,7 +31,11 @@ MUSIC_PATTERNS: list[tuple[str, str, dict]] = [
     (r"^播放本地(?P<keyword>.+)$", "play_song", {}),
     (r"^播放音乐(?P<keyword>.+)$", "play_song", {}),
     (r"^播放歌曲(?P<keyword>.+)$", "play_song", {}),
-    (r"^播放歌单(?P<keyword>.+)$", "play_playlist", {}),
+    # 三种归类各一条：文件夹 / 歌手 / 歌单
+    (r"^播放文件夹(?:的)?(?P<keyword>.+)$", "play_folder", {}),
+    (r"^播放目录(?:的)?(?P<keyword>.+)$", "play_folder", {}),
+    (r"^播放歌手(?:的)?(?P<keyword>.+)$", "play_artist", {}),
+    (r"^播放歌单(?:的)?(?P<keyword>.+)$", "play_playlist", {}),
     (r"^播放收藏$", "play_favorites", {}),
     (r"^播放第(?P<num>\d+)个?$", "play_index", {}),
     (r"^播放(?P<keyword>.+)$", "play_song", {}),
@@ -38,6 +48,9 @@ MUSIC_PATTERNS: list[tuple[str, str, dict]] = [
     (r"^列表循环$", "mode", {"mode": "REPEAT_ALL"}),
     (r"^随机播放$", "mode", {"mode": "SHUFFLE"}),
     (r"^顺序播放$", "mode", {"mode": "NORMAL"}),
+    # 把当前这首歌收进歌单（歌单不存在会自动新建）
+    (r"^(?:把)?(?:这首歌|这首|当前的?歌|当前歌曲)?(?:加入|添加到?|放进|收进)歌单(?P<keyword>.+)$",
+     "playlist_add", {}),
     (r"^加入收藏$", "fav_add", {}),
     (r"^取消收藏$", "fav_del", {}),
     (r"^音量(调到|设置为|调成)?(?P<num>\d+)$", "volume", {}),
