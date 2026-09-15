@@ -139,10 +139,19 @@ input[type=range]{width:180px}
       <h2>选择要接入的音箱</h2>
       <div class="hint">勾选后保存到配置，并点击右上角"应用重启"生效。</div>
       <table style="margin-top:10px">
-        <thead><tr><th style="width:44px">启用</th><th>名称</th><th>型号</th><th>DID</th></tr></thead>
+        <thead><tr><th style="width:44px">启用</th><th>名称</th><th>型号</th><th>DID</th><th style="width:250px">HA 媒体实体</th></tr></thead>
         <tbody id="devList"></tbody>
       </table>
-      <div class="controls"><button class="primary" onclick="saveDevices()">保存选择</button></div>
+      <div class="hint">
+        选上 HA 实体后，这台音箱的暂停 / 继续 / 停止与状态读取都由 HA 实体负责
+        （需要在「配置 → 模块开关」里打开「用 HA 接管播放控制」）。
+        留空则继续走小米 API。
+      </div>
+      <div class="controls">
+        <button class="primary" onclick="saveDevices()">保存选择</button>
+        <button class="ghost" onclick="loadDevices(true)">重新加载</button>
+        <span class="hint" id="devMsg"></span>
+      </div>
     </div>
   </section>
 
@@ -185,9 +194,19 @@ input[type=range]{width:180px}
         <div><label><input type="checkbox" id="cfgDlna"> DLNA 渲染器</label></div>
         <div><label><input type="checkbox" id="cfgVoice"> 语音指令</label></div>
         <div><label><input type="checkbox" id="cfgHa"> 接入 Home Assistant（播报）</label></div>
+        <div><label><input type="checkbox" id="cfgHaControl"> 用 HA 接管播放控制</label></div>
         <div><label><input type="checkbox" id="cfgAi"> AI 语音桥接</label></div>
       </div>
-      <label>语音轮询间隔（秒）</label><input type="number" id="cfgPull" min="0.5" step="0.5" max="30">
+      <div class="hint">
+        「用 HA 接管播放控制」打开后，已配 HA 实体的音箱：暂停 / 继续 / 停止
+        与音量都走 HA 的 media_player 实体，状态也改从 HA 读（不再每几秒打
+        小米云）；未配实体的音箱照旧走小米 API。音量写完会回读校验，
+        对不上自动回落小米 API。
+      </div>
+      <div class="row">
+        <div><label>语音轮询间隔（秒）</label><input type="number" id="cfgPull" min="0.5" step="0.5" max="30"></div>
+        <div><label>HA 状态读取间隔（秒）</label><input type="number" id="cfgHaPoll" min="0.5" step="0.5" max="30"></div>
+      </div>
     </div>
     <div class="card">
       <h2>Home Assistant</h2>
@@ -198,7 +217,13 @@ input[type=range]{width:180px}
       <div class="hint" id="haSaved"></div>
       <div class="controls">
         <button class="ghost" onclick="testHa()">测试连接</button>
+        <button class="ghost" onclick="loadHaEntities()">刷新实体列表</button>
         <span class="hint" id="haTestMsg"></span>
+      </div>
+      <div class="hint">
+        音箱对应的媒体实体在「设备」页里逐台选择。注意官方米家集成给小爱的
+        media_player 没有「停止」能力位，所以停止是「断流 + 暂停」组合实现的
+        （音箱本来也不认云端停止指令）。
       </div>
     </div>
     <div class="controls" style="margin-bottom:30px">
@@ -330,7 +355,10 @@ function renderPlayer(p){
   if(!p) return;
   document.getElementById('nowTitle').textContent = p.current ? p.current.name : '—';
   document.getElementById('nowMeta').textContent =
-    `状态 ${p.state} · ${p.index+1}/${p.total}`;
+    `状态 ${p.state} · ${p.index+1}/${p.total}` +
+    (p.status_source === 'home_assistant'
+      ? ` · 控制与状态: HA ${(p.ha_entity||'').replace('media_player.','')}`
+      : ' · 控制与状态: 小米 API');
   document.getElementById('vol').value = p.volume;
   document.getElementById('volVal').textContent = p.volume;
   document.getElementById('selMode').value = p.mode;
@@ -368,15 +396,46 @@ async function playKw(){
 }
 async function rescan(){ await post('/api/library/scan'); loadLibrary(); refresh(); }
 
-async function loadDevices(){
+let HA_ENTITIES = [];
+async function loadHaEntities(){
+  // HA 没配好时这个接口会报错，界面照常可用，下拉里就只有"不用"
+  try{ HA_ENTITIES = await api('/api/ha/media_players'); }
+  catch(e){ HA_ENTITIES = []; }
+  return HA_ENTITIES;
+}
+function haOptions(cur){
+  const opts = ['<option value="">不用（走小米 API）</option>'];
+  for(const e of HA_ENTITIES){
+    const label = `${e.name} · ${e.entity_id.replace('media_player.','')}（${e.state}）`;
+    opts.push(`<option value="${e.entity_id}" ${e.entity_id===cur?'selected':''}>${label}</option>`);
+  }
+  // 已保存但这次没拉到的实体也别丢，免得一次保存就被清空
+  if(cur && !HA_ENTITIES.some(e=>e.entity_id===cur)){
+    opts.push(`<option value="${cur}" selected>${cur}（未在列表中找到）</option>`);
+  }
+  return opts.join('');
+}
+async function loadDevices(force){
+  if(force || !HA_ENTITIES.length) await loadHaEntities();
   S.devices = await api('/api/devices');
   document.getElementById('devList').innerHTML = S.devices.map(d=>
     `<tr><td><input type="checkbox" data-did="${d.did}" ${d.selected?'checked':''}></td>
-     <td>${d.name||'-'}</td><td>${d.hardware||'-'}</td><td class="mono">${d.did.slice(0,18)}</td></tr>`).join('');
+     <td>${d.name||'-'}</td><td>${d.hardware||'-'}</td><td class="mono">${d.did.slice(0,18)}</td>
+     <td><select data-hadid="${d.did}" style="max-width:240px">${haOptions(d.ha_entity||'')}</select></td></tr>`).join('');
+  document.getElementById('devMsg').textContent = HA_ENTITIES.length
+    ? `HA 里找到 ${HA_ENTITIES.length} 个媒体实体` : '未能读取 HA 实体列表（可先配好 HA 地址与令牌）';
 }
 async function saveDevices(){
-  const dids = [...document.querySelectorAll('#devList input:checked')].map(x=>x.dataset.did);
+  const rows = [...document.querySelectorAll('#devList tr')];
+  const boxes = rows.map(r=>r.querySelector('input[type=checkbox]')).filter(Boolean);
+  const dids = boxes.filter(cb=>cb.checked).map(cb=>cb.dataset.did);
   await post('/api/config',{mi_did:dids.join(',')});
+  // 只保存勾选了的音箱，免得往配置里塞没启用的 did
+  for(const cb of boxes){
+    if(!cb.checked) continue;
+    const sel = document.querySelector(`select[data-hadid="${cb.dataset.did}"]`);
+    await post('/api/speakers',{did:cb.dataset.did, ha_entity:sel?sel.value:''});
+  }
   await doRestart();
 }
 
@@ -391,8 +450,10 @@ async function loadConfig(){
   document.getElementById('cfgDlna').checked = c.enable_dlna;
   document.getElementById('cfgVoice').checked = c.enable_voice;
   document.getElementById('cfgHa').checked = c.enable_ha;
+  document.getElementById('cfgHaControl').checked = c.ha_control;
   document.getElementById('cfgAi').checked = c.ai_enabled;
   document.getElementById('cfgPull').value = c.pull_ask_sec;
+  document.getElementById('cfgHaPoll').value = c.ha_poll_sec;
   document.getElementById('cfgHaUrl').value = c.ha_url||'';
   // AI 桥接
   document.getElementById('aiKeywords').value = c.ai_keywords||'';
@@ -430,6 +491,8 @@ async function saveConfig(){
     enable_dlna:document.getElementById('cfgDlna').checked,
     enable_voice:document.getElementById('cfgVoice').checked,
     enable_ha:document.getElementById('cfgHa').checked,
+    ha_control:document.getElementById('cfgHaControl').checked,
+    ha_poll_sec:numOr('cfgHaPoll', 2),
     pull_ask_sec:+document.getElementById('cfgPull').value,
     ha_url:document.getElementById('cfgHaUrl').value,
     ...aiBody(),

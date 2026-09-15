@@ -69,6 +69,7 @@ class DLNARenderer:
         self.volume = player.volume
         self.mute = False
         self.uri_token = ""     # 当前 URI 对应的缓冲 token
+        self.delivered_token = ""  # 最近一次真的投出去的那次投递属于哪个 token
 
         # 由 DLNAServer 注入
         self.on_set_uri = None    # async (renderer, uri, meta) -> None

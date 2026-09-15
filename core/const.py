@@ -59,6 +59,13 @@ MI_STATUS_PAUSED = 2
 # （云端停止指令有延迟，静音兜底也需要几秒才生效）
 USER_PAUSE_GRACE_SEC = 20
 
+# 用 HA 实体接管后，指令是直连 HA 的，状态也由 HA 自己维护，
+# 不存在云端 player_* 那种排队延迟，所以宽限期可以收紧到几秒
+HA_PAUSE_GRACE_SEC = 6
+
+# 未接 HA 时核对音箱真实状态的间隔（秒）
+STATUS_POLL_SEC = 5.0
+
 # ---------------- 音乐库 ----------------
 MUSIC_EXTENSIONS = {
     ".mp3", ".flac", ".wav", ".ape", ".ogg", ".m4a", ".aac", ".wma", ".opus",

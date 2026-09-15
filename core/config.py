@@ -61,6 +61,8 @@ class Speaker:
     play_mode: str = "auto"
     # 强制转码（覆盖型号自动判断）
     force_convert: bool = False
+    # 这台音箱在 HA 里对应的 media_player 实体（用 HA 接管控制与状态读取）
+    ha_entity: str = ""
     enabled: bool = True
 
     def ensure_udn(self) -> str:
@@ -128,6 +130,11 @@ class Config:
     # Home Assistant
     ha_url: str = ""
     ha_token: str = ""
+    # 用 HA 实体接管播放控制与状态读取（暂停/继续/停止、状态轮询）
+    # 关闭时一切照旧走小米 API；开启但某台没配 ha_entity 时该台也照旧
+    ha_control: bool = False
+    # HA 状态读取间隔（秒）。HA 状态是它自己维护的，读一次很便宜
+    ha_poll_sec: float = 2.0
 
     # AI 桥接：关键词命中 -> 转发给外部接口 -> 用 HA 播报
     ai_enabled: bool = False
@@ -169,6 +176,8 @@ class Config:
             self.ha_url = _env("HA_URL", "")
         if not self.ha_token:
             self.ha_token = _env("HA_TOKEN", "")
+        self.ha_control = _env_bool("HA_CONTROL", self.ha_control)
+        self.ha_poll_sec = max(0.5, _env_float("HA_POLL_SEC", self.ha_poll_sec))
         self.ai_enabled = _env_bool("AI_ENABLED", self.ai_enabled)
         if not self.ai_keywords:
             self.ai_keywords = _env("AI_KEYWORDS", "")
@@ -239,6 +248,15 @@ class Config:
     def get_enabled_speakers(self) -> list[Speaker]:
         return [self.get_speaker(d) for d in self.get_did_list()
                 if self.get_speaker(d).enabled]
+
+    def speaker_ha_entity(self, did: str) -> str:
+        """读某台音箱配的 HA 媒体实体（只读，不创建条目）"""
+        sp = self.speakers.get(did)
+        if sp is None:
+            return ""
+        if isinstance(sp, dict):
+            return str(sp.get("ha_entity") or "")
+        return sp.ha_entity or ""
 
     # ---------- 持久化 ----------
     def save(self):

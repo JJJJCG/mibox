@@ -20,7 +20,7 @@ from starlette.responses import Response, StreamingResponse
 
 from core.auth import AuthManager
 from core.buffer import BufferManager
-from core.config import Config
+from core.config import Config, Speaker
 from core.const import LOG_NAME
 from core.library import MusicLibrary
 from core.media import MediaService
@@ -31,6 +31,7 @@ from core.streams import StreamManager, guess_content_type, parse_range
 from dlna.server import DLNAServer
 from ha.bridge import AIBridge, keywords_of
 from ha.client import HAClient
+from ha.media import HASpeaker
 from voice.dispatcher import CommandDispatcher
 from voice.poller import ConversationPoller
 
@@ -105,6 +106,8 @@ class AppState:
 
             await self.auth.update_speakers_info()
 
+            # HA 客户端要先建好：播放器的暂停/继续/停止与状态读取都挂在它上面
+            self._build_ha()
             self._build_players()
 
             if cfg.enable_dlna:
@@ -112,8 +115,6 @@ class AppState:
                 for player in self.players.values():
                     self.dlna.register(player.speaker.did, player)
                 await self.dlna.start()
-
-            self._build_ha()
 
             if cfg.enable_voice:
                 speakers = [p.speaker for p in self.players.values()]
@@ -137,19 +138,43 @@ class AppState:
             if not sp.device_id:
                 log.warning(f"音箱 {sp.name or sp.did} 缺少 device_id，跳过")
                 continue
-            controller = SpeakerController(sp, self.auth, self.media, self.streams)
+            ha_spk = self._build_ha_speaker(sp)
+            controller = SpeakerController(
+                sp, self.auth, self.media, self.streams, ha=ha_spk
+            )
             player = Player(sp, controller, self.config, self.media)
             player.start_monitor()
             self.players[sp.did] = player
-            log.info(f"播放器就绪: {sp.get_dlna_name()}")
+            log.info(
+                f"播放器就绪: {sp.get_dlna_name()}"
+                f"（控制与状态: {'HA ' + sp.ha_entity if ha_spk else '小米 API'}）"
+            )
         # 音量同步到默认音量
         for p in self.players.values():
             p.volume = self.config.default_volume
 
+    def _build_ha_speaker(self, sp: Speaker) -> HASpeaker | None:
+        """按音箱配置构造 HA 媒体实体代理；返回 None 表示这台继续走小米 API"""
+        cfg = self.config
+        if not cfg.ha_control:
+            return None
+        if self.ha_client is None or not self.ha_client.configured:
+            # 配置缺失的告警在 _build_ha 里已经打过一次，这里逐台静默降级
+            log.debug(f"[{sp.name or sp.did}] HA 不可用，回落小米 API")
+            return None
+        entity = (sp.ha_entity or "").strip()
+        if not entity:
+            log.info(f"[{sp.name or sp.did}] 未指定 HA 媒体实体，继续走小米 API")
+            return None
+        return HASpeaker(self.ha_client, entity)
+
     def _build_ha(self):
         cfg = self.config
-        if cfg.enable_ha and cfg.ha_url and cfg.ha_token:
+        # 播报（enable_ha）与接管播放控制（ha_control）都需要客户端
+        if (cfg.enable_ha or cfg.ha_control) and cfg.ha_url and cfg.ha_token:
             self.ha_client = HAClient(cfg.ha_url, cfg.ha_token)
+        elif cfg.ha_control:
+            log.warning("已开启 HA 接管播放控制，但未配置 HA 地址或长期令牌")
 
         # AI 桥接的播报走 HA，所以没有 HA 客户端时桥接只能"问得到、说不出"
         if cfg.ai_enabled:
@@ -291,6 +316,7 @@ async def api_status():
         "enable_voice": state.config.enable_voice,
         "enable_ha": state.config.enable_ha,
         "enable_ai": state.config.ai_enabled,
+        "ha_control": state.config.ha_control,
         "ai_ready": bool(state.ai_bridge and state.ai_bridge.configured),
         "players": [p.status() for p in state.players.values()],
     }
@@ -308,6 +334,8 @@ async def api_devices():
             "name": d.get("name", ""),
             "hardware": d.get("hardware", ""),
             "selected": d.get("miotDID", "") in selected,
+            # 这台音箱在 HA 里对应的 media_player 实体（用于接管控制与状态）
+            "ha_entity": state.config.speaker_ha_entity(d.get("miotDID", "")),
         }
         for d in devices
     ]
@@ -370,6 +398,8 @@ async def api_get_config():
         "enable_ha": cfg.enable_ha,
         "ha_url": cfg.ha_url,
         "has_ha_token": bool(cfg.ha_token),
+        "ha_control": cfg.ha_control,
+        "ha_poll_sec": cfg.ha_poll_sec,
         "pull_ask_sec": cfg.pull_ask_sec,
         # AI 桥接
         "ai_enabled": cfg.ai_enabled,
@@ -394,7 +424,7 @@ async def api_save_config(request: Request):
         "account", "password", "cookie", "mi_did", "hostname",
         "web_port", "dlna_port", "music_path", "default_volume",
         "enable_dlna", "enable_voice", "enable_ha", "ha_url",
-        "ha_token", "pull_ask_sec",
+        "ha_token", "ha_control", "ha_poll_sec", "pull_ask_sec",
         "ai_enabled", "ai_keywords", "ai_url", "ai_token", "ai_timeout",
         "ai_voice_hint", "ai_notify_entity", "ai_ack",
     ):
@@ -536,6 +566,50 @@ async def api_ha_test(request: Request):
     finally:
         await client.close()
     return {"ok": ok, "message": msg}
+
+
+@app.get("/api/ha/media_players")
+async def api_ha_media_players():
+    """列出 HA 里的 media_player 实体，供界面给每台音箱挑一个"""
+    if state.ha_client is None or not state.ha_client.configured:
+        raise HTTPException(status_code=400, detail="HA 未配置（需要地址与长期令牌）")
+    return await state.ha_client.list_media_players()
+
+
+@app.get("/api/ha/state")
+async def api_ha_state(entity_id: str):
+    """读一个实体的状态，并给出映射后的播放状态（自测用）
+
+    验证「播本地音乐时 HA 的 state 会不会变成 playing」就靠它。
+    """
+    if state.ha_client is None or not state.ha_client.configured:
+        raise HTTPException(status_code=400, detail="HA 未配置（需要地址与长期令牌）")
+    if not entity_id:
+        raise HTTPException(status_code=400, detail="请提供 entity_id")
+    raw = await state.ha_client.get_state(entity_id)
+    if raw is None:
+        raise HTTPException(status_code=404, detail=f"读不到实体 {entity_id}")
+    probe = HASpeaker(state.ha_client, entity_id, ttl=0)
+    return {
+        "entity_id": entity_id,
+        "state": raw.get("state", ""),
+        "attributes": raw.get("attributes", {}),
+        "mapped": await probe.status(force=True),
+    }
+
+
+@app.post("/api/speakers")
+async def api_save_speaker(request: Request):
+    """保存单台音箱的 HA 媒体实体（body: {did, ha_entity}）"""
+    body = await request.json()
+    did = (body.get("did") or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="缺少 did")
+    sp = state.config.get_speaker(did)
+    sp.ha_entity = (body.get("ha_entity") or "").strip()
+    state.config.save()
+    log.info(f"音箱 {sp.name or did} 的 HA 媒体实体设为 {sp.ha_entity or '（无）'}")
+    return {"ok": True, "did": did, "ha_entity": sp.ha_entity}
 
 
 # ==================== AI 桥接 ====================

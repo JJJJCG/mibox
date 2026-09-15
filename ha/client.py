@@ -75,6 +75,47 @@ class HAClient:
             log.debug(f"获取 HA 状态失败: {e}")
             return None
 
+    async def list_media_players(self) -> list[dict]:
+        """列出 HA 里的 media_player 实体，供界面给音箱挑对应实体
+
+        走 /api/states 全量列表再过滤，比逐个实体猜名字可靠。
+        """
+        if not self.configured:
+            return []
+        session = await self._ensure_session()
+        try:
+            async with session.get(
+                f"{self.base_url}/api/states", headers=self._headers()
+            ) as r:
+                if r.status >= 400:
+                    return []
+                states = await r.json()
+        except Exception as e:
+            log.error(f"拉取 HA 实体列表失败: {e}")
+            return []
+
+        out = []
+        for st in states or []:
+            eid = st.get("entity_id", "")
+            if not eid.startswith("media_player."):
+                continue
+            attrs = st.get("attributes") or {}
+            level = attrs.get("volume_level")
+            try:
+                volume = int(round(float(level) * 100)) if level is not None else 0
+            except (TypeError, ValueError):
+                volume = 0
+            out.append({
+                "entity_id": eid,
+                "name": attrs.get("friendly_name") or eid.split(".", 1)[-1],
+                "state": st.get("state", ""),
+                "device_class": attrs.get("device_class", ""),
+                "volume": volume,
+                "features": attrs.get("supported_features", 0),
+            })
+        out.sort(key=lambda x: x["entity_id"])
+        return out
+
     async def test(self) -> tuple[bool, str]:
         """测试连通性"""
         if not self.configured:

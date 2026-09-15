@@ -133,6 +133,65 @@ python3 -c 'import json;print(json.load(open("/root/.pi/agent/http-bridge.json")
 | `POST` | `/api/ai/test` | `{"text":"你好","url":"...","token":"..."}` → 真调一次接口，返回 reply |
 | `POST` | `/api/ai/speak` | `{"message":"测试播报"}` → 用当前配置播报一句 |
 
+## HA 接管播放控制（暂停 / 继续 / 停止 + 状态）
+
+音箱用**官方米家集成（Xiaomi Home）**接入 HA 后，HA 里会有对应的
+`media_player` 实体。打开「配置 → 模块开关 → 用 HA 接管播放控制」，
+再到「设备」页给每台音箱挑一个 HA 媒体实体，这台音箱的暂停/继续/停止
+与状态读取就交给 HA，不再打小米云。
+
+### 三条通道各自的分工
+
+| 通道 | 走谁 | 说明 |
+|---|---|---|
+| 投递 URL | 小米 API | `play_by_url` / `play_by_music_url`。HA 实体没有 `PLAY_MEDIA` 能力位，`play_media` 调了不生效 |
+| 暂停 / 继续 / 停止 | HA 实体 | `media_pause` / `media_play` |
+| 状态读取 | HA 实体 | 读 `GET /api/states/<entity>`，替代每 5 秒一次的 `mina.player_get_status` |
+| 音量 | HA 实体 | `volume_set`，**写完回读校验**，对不上就回落小米 API |
+| DLNA 状态漂移修正 | HA 实体 | 与播放器共用同一份状态缓存，间隔从 10s 收到 `ha_poll_sec` |
+
+未配置实体的音箱、或关掉开关时，全部照旧走小米 API（零回归）。
+
+### 三个必须知道的实情
+
+1. **「停止」没有对应的 HA 服务。** 官方集成给小爱的 media_player 只有
+   `supported_features = 17469`（PLAY|PAUSE|PREV|NEXT|VOLUME_SET|VOLUME_MUTE|
+   VOLUME_STEP），**没有 STOP(4096)**，所以 `media_stop` 在 HA 里是空转。
+   停止只能用「断流 + `media_pause`」组合实现（音箱本来也不认云端停止指令）。
+2. **暂停默认不断流。** 断过流音箱就没法"接着播"，HA 的 `media_play` 也就续不上。
+   所以暂停只在「HA 指令确认没生效」时才掐流兜底；继续优先走 HA 原生续播，
+   续不上才回落成重新投递整首。DLNA 的「暂停后播放」同理：同一个 URI 会话内
+   续播，换过曲（token 变了）才重投。
+3. **播外部 URL 时音箱未必上报 `playing-state`。** 那样 HA 会一直显示 `idle`。
+   因此代码只在「HA 见过这台在播」之后才采信它的 `idle`（否则队列会被误判打断）。
+   同理，`media_player` 不提供播放进度，界面上的进度仍由本地计时负责。
+
+### 音量为什么要回读
+
+HA 的 `volume_level` 是 0~1，界面用的是 0~100，换算方向没问题，但不同型号的
+换算基准未必一致（静音态下读出来的值也不可信）。所以 `set_volume` 写完立刻
+回读一次：`|回读值 - 目标值| > max(5, 10%)` 就判定不可信，自动回落小米 API，
+并在日志里写明"疑似量纲不一致"。这样最坏情况是"没生效"，而不是"被设成静音或爆音"。
+
+### DLNA 这边的两个"轮询"
+
+- `_poll_states`：核对音箱是否还在播、修正 DLNA 传输状态。**它已经是读 HA 状态**
+  （没接 HA 时读小米 API），间隔也改成跟着状态源走：HA 2s（`ha_poll_sec`）、
+  小米 10s。两处读取共用同一份 TTL 缓存，不会重复打 HA。
+- SSDP 的 `alive` 广播（30s）：把自己公告到局域网，属于设备发现，不是状态轮询，
+  与 HA 无关，保持原样。
+
+### 相关接口（自测用）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/ha/media_players` | 列出 HA 里所有 media_player 实体（含当前状态） |
+| `GET` | `/api/ha/state?entity_id=media_player.x` | 读单个实体，并给出映射后的播放状态 |
+| `POST` | `/api/speakers` | `{"did":"...","ha_entity":"media_player..."}` 保存每台的实体 |
+
+验证「播本地音乐时 HA 的 state 会不会变成 playing」，投一首歌后连着查：
+`/api/ha/state?entity_id=media_player.xiaomi_cn_xxx_oh2`。
+
 ## 目录结构
 
 ```
@@ -140,7 +199,7 @@ app.py                  FastAPI 入口 + 生命周期编排
 core/    auth  config  speaker  player  library  media  buffer  const
 voice/   poller  dispatcher  music_cmds
 dlna/    ssdp  renderer  server  templates
-ha/      client  bridge
+ha/      client  media  bridge
 web/     index.html（零构建单页）
 ```
 
@@ -157,6 +216,7 @@ web/     index.html（零构建单页）
 | `MIBOX_WEB_PORT` / `MIBOX_DLNA_PORT` | 端口 |
 | `MIBOX_ENABLE_DLNA` / `MIBOX_ENABLE_VOICE` / `MIBOX_ENABLE_HA` | 模块开关 |
 | `MIBOX_HA_URL` / `MIBOX_HA_TOKEN` | Home Assistant |
+| `MIBOX_HA_CONTROL` / `MIBOX_HA_POLL_SEC` | 用 HA 实体接管播放控制 / HA 状态读取间隔（默认 2 秒） |
 | `MIBOX_AI_ENABLED` | 开启 AI 桥接 |
 | `MIBOX_AI_KEYWORDS` | 触发关键词，逗号分隔 |
 | `MIBOX_AI_URL` / `MIBOX_AI_TOKEN` | 外部接口基址与 Bearer 令牌 |
@@ -169,7 +229,7 @@ web/     index.html（零构建单页）
 ## 已知限制
 
 - 仅 `linux/amd64`。
-- 一期不做：AirPlay、yt-dlp 下载、MQTT、HA media_player 实体。
+- 一期不做：AirPlay、yt-dlp 下载、MQTT。
 - 播报统一走一个 `notify.*` 实体（多音箱场景下回答都从这台出来）；需要按音箱分发时再说。
 - AI 接口故障/超时时会播一句「喵喵……它好像睡着了」，不会静默。
 - 语音指令依赖小米对话记录接口，接口变动会导致语音失效（播放与 DLNA 不受影响）。

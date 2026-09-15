@@ -326,6 +326,16 @@ class DLNAServer:
         asyncio.create_task(buf.start_download())
 
     async def _on_play(self, r: DLNARenderer) -> bool:
+        # 暂停之后按播放：由 HA 接管时暂停不断流，音箱手里还有数据，
+        # 让它自己续上，别从头再放一遍。换过曲（token 变了）就不会走到这。
+        if (r.player.state == "paused"
+                and r.delivered_token
+                and r.delivered_token == getattr(r, "uri_token", "")):
+            await r.player.resume()
+            if r.player.state == "playing":
+                log.info(f"[{r.name}] 从暂停处继续播放")
+                return True
+
         token = getattr(r, "uri_token", "")
         buf = self.buffers.get(token) if token else None
         if buf is None:
@@ -354,6 +364,8 @@ class DLNAServer:
             source="dlna",
         )
         await r.player.play_items([item])
+        # 记下"这次投递对应哪个 URI 会话"，供 _on_play 判断能否续播
+        r.delivered_token = getattr(r, "uri_token", "")
         return r.player.state == "playing"
 
     async def _on_pause(self, r: DLNARenderer):
@@ -415,18 +427,35 @@ class DLNAServer:
         await r.player.set_volume(volume)
 
     # ---------------- 状态同步 ----------------
+    def _status_interval(self) -> float:
+        """状态核对间隔（秒）
+
+        没接 HA 时 10s：与 Player 的 5s 错开，减少对小米接口的重复查询。
+        接 HA 后读的是 HA 自己维护的状态，且与 Player 共用同一份 TTL 缓存
+        （两处读取会合并成一次请求），所以只需关心"多久发现音箱停了"，
+        直接跟 HA 状态读取间隔对齐即可。
+        """
+        if any(r.player.controller.ha_active for r in self.renderers.values()):
+            return max(1.0, self.config.ha_poll_sec)
+        return 10.0
+
     async def _poll_states(self):
-        """定期核对音箱真实状态，修正 DLNA 状态漂移"""
+        """定期核对音箱真实状态，修正 DLNA 状态漂移
+
+        状态本身由 controller.get_status() 提供（配了 HA 实体就是读 HA，
+        否则读小米 API），这里只负责把结论落到 DLNA 的传输状态上。
+        """
         try:
             while True:
-                # 10s：与 Player 状态对齐(5s)错开节奏，减少对小米接口的重复查询
-                await asyncio.sleep(10)
+                await asyncio.sleep(self._status_interval())
                 for r in self.renderers.values():
                     try:
                         if r.transport_state != TRANSPORT_STATE_PLAYING:
                             continue
-                        st = await r.player.controller.get_status()
-                        if st.get("status") != MI_STATUS_PLAYING:
+                        ctl = r.player.controller
+                        st = await ctl.get_status()
+                        # HA 看不到这条流的播放状态时，它的 idle 说明不了什么
+                        if st.get("status") != MI_STATUS_PLAYING and ctl.status_trusted:
                             log.info(f"[{r.name}] 音箱已停止，同步 DLNA 状态并释放缓冲")
                             r.transport_state = TRANSPORT_STATE_STOPPED
                             self._release_buffer(r)

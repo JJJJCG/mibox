@@ -15,6 +15,7 @@ from typing import Optional
 
 from .config import Config, Speaker
 from .const import (
+    HA_PAUSE_GRACE_SEC,
     MI_STATUS_PAUSED,
     MI_STATUS_PLAYING,
     MI_STATUS_STOPPED,
@@ -22,6 +23,7 @@ from .const import (
     PLAY_MODE_REPEAT_ALL,
     PLAY_MODE_REPEAT_ONE,
     PLAY_MODE_SHUFFLE,
+    STATUS_POLL_SEC,
     USER_PAUSE_GRACE_SEC,
 )
 from .media import MediaService
@@ -196,14 +198,15 @@ class Player:
             return
         self._cancel_timer()
         self._seq += 1
-        # 记下暂停位置供界面显示，然后掐断音箱正在拉的流
+        # 记下暂停位置供界面显示。走 HA 时不断流（流留着才能续播），
+        # 只有 HA 指令确认没生效，Controller 才会掐流兜底。
         self._paused_pos = float(self.elapsed())
         self._user_paused = True
         self._pause_at = time.time()
         await self.controller.pause(self._current_url())
         self.state = "paused"
         self.started_at = 0.0
-        log.info(f"[{self.speaker.name}] 暂停于 {int(self._paused_pos)}s（已断流）")
+        log.info(f"[{self.speaker.name}] 暂停于 {int(self._paused_pos)}s")
 
     async def resume(self):
         # 被外部（语音/其他设备）停止时 state 是 idle，此时也允许"继续"，
@@ -213,7 +216,22 @@ class Player:
             return
         if self.state != "paused":
             return
-        # 断流之后音箱没有"接着播"这回事，重新投递整首
+
+        # 优先让 HA 实体自己接着播：流没被掐断时音箱手里还有数据，
+        # 这才是真续播（不回到歌曲开头）
+        if self.cur_item and await self.controller.resume(self._current_url()):
+            self.state = "playing"
+            self.started_at = time.time() - self._paused_pos
+            self._deliver_at = 0.0        # 不是新投递，不占投递宽限期
+            self._user_paused = False
+            remaining = max(1, (self.cur_item.duration or 0) - self._paused_pos)
+            self._schedule_next(wait=remaining)
+            log.info(
+                f"[{self.speaker.name}] 继续播放（HA 续播，剩余 {int(remaining)}s）"
+            )
+            return
+
+        # 断过流 / HA 续不上：只能重新投递整首
         self._paused_pos = 0.0
         self._user_paused = False
         if self.cur_item:
@@ -259,9 +277,20 @@ class Player:
             "current": self.cur_item.to_dict() if self.cur_item else None,
             "elapsed": self.elapsed(),
             "queue": [i.to_dict() for i in self.queue[:50]],
+            # 控制与状态由谁提供：配了 HA 实体就是 home_assistant
+            "status_source": "home_assistant" if self.controller.ha_active else "mina",
+            "ha_entity": self.speaker.ha_entity,
         }
 
     # ---------------- 真实状态对齐 ----------------
+    def _poll_interval(self) -> float:
+        """状态核对间隔：HA 接管时读的是它本地维护的状态，可以更勤"""
+        return self.config.ha_poll_sec if self.controller.ha_active else STATUS_POLL_SEC
+
+    def _pause_grace(self) -> float:
+        """刚按下暂停时的宽限期：HA 指令延迟小，不必等 20 秒"""
+        return HA_PAUSE_GRACE_SEC if self.controller.ha_active else USER_PAUSE_GRACE_SEC
+
     def start_monitor(self):
         if self._monitor_task is None:
             self._monitor_task = asyncio.create_task(self._monitor())
@@ -271,11 +300,15 @@ class Player:
 
         场景：用户对小爱说"停止"（小爱原生处理，mibox 不感知）、手机上
         暂停、其他设备控制音箱——本地到点仍会自动切下一首。
-        这里每 5 秒核对一次真实状态并取消/恢复计时器。
+        这里定期核对真实状态并取消/恢复计时器。
+
+        接 HA 之后核对的是 HA 实体上的状态（从 HA 本地读，不碰小米云），
+        间隔更短；但播外部 URL 时音箱未必上报 playing-state，所以只有
+        "见过它在播"（controller.status_trusted）的 idle 才算真的停了。
         """
         try:
             while True:
-                await asyncio.sleep(5)
+                await asyncio.sleep(self._poll_interval())
                 if self.state == "idle" or self.cur_item is None:
                     continue
                 # 刚投递完音箱可能还没真正开播，宽限期内不判停
@@ -288,6 +321,12 @@ class Player:
                 status = st.get("status", MI_STATUS_STOPPED)
 
                 if status == MI_STATUS_STOPPED and self.state == "playing":
+                    if not self.controller.status_trusted:
+                        log.debug(
+                            f"[{self.speaker.name}] HA 未见过这条流在播，"
+                            f"忽略它的 idle"
+                        )
+                        continue
                     log.info(f"[{self.speaker.name}] 音箱已被外部停止，取消自动切歌")
                     self._cancel_timer()
                     self._seq += 1
@@ -296,19 +335,22 @@ class Player:
                     log.info(f"[{self.speaker.name}] 音箱已被外部暂停，暂停队列计时")
                     self._cancel_timer()
                     self._seq += 1
-                    # 用音箱上报的位置作为续播点（拿不到就退回本地计时）
-                    self._paused_pos = float(st.get("position", 0) or self.elapsed())
+                    # 用音箱上报的位置作为续播点（HA 不给进度，退回本地计时）
+                    self._paused_pos = float(
+                        st.get("position", 0) or self.elapsed()
+                    )
                     self._user_paused = False
                     self.started_at = 0.0
                     self.state = "paused"
                 elif status == MI_STATUS_PLAYING and self.state == "paused":
-                    # mibox 自己刚按下暂停时，云端指令/静音兜底还在路上，
-                    # 此时音箱上报 PLAYING 属于延迟，不能当成"外部恢复播放"
+                    # mibox 自己刚按下暂停时，指令还在路上，此时音箱上报
+                    # PLAYING 属于延迟，不能当成"外部恢复播放"
                     if self._user_paused and (
-                        time.time() - self._pause_at < USER_PAUSE_GRACE_SEC
+                        time.time() - self._pause_at < self._pause_grace()
                     ):
                         continue
-                    pos = st.get("position", 0)
+                    # HA 不提供进度，用它拿不到就退回按下暂停时记的位置
+                    pos = int(st.get("position", 0) or self._paused_pos)
                     remaining = max(1, (self.cur_item.duration or 0) - pos)
                     log.info(
                         f"[{self.speaker.name}] 音箱被外部恢复播放，"
