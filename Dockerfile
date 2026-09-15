@@ -1,11 +1,9 @@
-FROM python:3.12-slim
+FROM python:3.12-alpine
 
 LABEL description="mibox - play local music on Xiaomi AI speakers, with DLNA renderer and Home Assistant bridge"
 
 # ffmpeg 用于按需转码（部分型号不支持无损格式）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 
