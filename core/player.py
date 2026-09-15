@@ -79,9 +79,23 @@ class Player:
 
     # ---------------- 内部 ----------------
     def _cancel_timer(self):
-        if self._timer and not self._timer.done():
-            self._timer.cancel()
+        """取消待触发的切歌定时器
+
+        坑：`next()` 既可能被外部（语音/接口）调用，也可能由定时器自己触发
+        （`_runner` -> `next(auto=True)`）。后者是"在当前任务里 cancel 当前
+        任务"，会把正在跑的 `next()` 自己取消掉——它会在第一个 await（真实
+        的投递网络调用）处抛 CancelledError 静默退出，于是歌永远切不到下
+        一首，音箱就靠自己的单曲循环反复重放同一首。所以这里必须跳过
+        "当前正在运行的任务"。
+        """
+        timer = self._timer
         self._timer = None
+        if (
+            timer is not None
+            and not timer.done()
+            and timer is not asyncio.current_task()
+        ):
+            timer.cancel()
 
     async def _resolve(self, item: QueueItem):
         """把 QueueItem 解析成可投递的 URL 和时长"""
@@ -179,21 +193,38 @@ class Player:
             if self.mode == PLAY_MODE_REPEAT_ALL:
                 nxt = 0
             else:
-                log.info(
-                    f"[{self.speaker.name}] 队列播放完毕（{self.mode}），停止"
-                )
-                self.state = "idle"
-                self.cur_item = None
-                self.started_at = 0.0
-                self._paused_pos = 0.0
-                self._user_paused = False
-                # index 留在最后一首，不再像以前那样重置成 0（重置会让界面
-                # 显示 1/N 却什么都没有，而且下次"下一首"会从第二首开始）
+                await self._finish()
                 return
 
         self.index = nxt
         self.cur_item = self.queue[nxt]
         await self._play_current()
+
+    async def _finish(self):
+        """队列播放完毕：真正停掉音箱并切断音频流
+
+        只把 state 改成 idle 是不够的。本地文件走的是 mibox 自己提供的 HTTP
+        流，音箱拉完 EOF 之后**不会自己上报停止**：它手里还晾着这条连接，HA
+        那边就一直显示 playing——表现就是"没声音，但音箱显示在播放"。
+        所以必须把流掐断（controller.stop 内部会 kill），音箱才会真的回到
+        停止态，HA 的实体状态也跟着更新。
+
+        另外音箱自己的播放器循环模式还开着，掐流也能顺带阻止它重拉最后一首。
+        """
+        url = self._current_url()
+        log.info(f"[{self.speaker.name}] 队列播放完毕（{self.mode}），停止并断流")
+        try:
+            await self.controller.stop(url)
+        except Exception as e:
+            log.error(f"[{self.speaker.name}] 停止音箱失败: {e}")
+
+        self.state = "idle"
+        self.cur_item = None
+        self.started_at = 0.0
+        self._paused_pos = 0.0
+        self._user_paused = False
+        # index 留在最后一首，不再像以前那样重置成 0（重置会让界面显示 1/N
+        # 却什么都没有，而且下次"下一首"会从第二首开始）
 
     async def prev(self):
         if not self.queue:
