@@ -74,6 +74,15 @@ MUSIC_EXTENSIONS = {
 # 无需转码、音箱可直接播放的格式
 DIRECT_PLAY_FORMATS = {"mp3", "mpeg", "wav", "x-wav", "m4a", "aac"}
 
+# 浏览器 <audio> 能直接解码的格式；这里的补集（ape/wma…）本地播放时先转 mp3
+BROWSER_PLAY_FORMATS = {
+    "mp3", "mpeg", "m4a", "aac", "wav", "x-wav", "ogg", "oga", "opus", "flac",
+}
+
+# 本地播放器（浏览器）的 DID：与真实音箱并列出现在设备列表里
+LOCAL_DID = "local"
+LOCAL_NAME = "本机播放（浏览器）"
+
 SUPPORTED_PROTOCOLS = (
     "http-get:*:audio/mpeg:*,"
     "http-get:*:audio/mp3:*,"

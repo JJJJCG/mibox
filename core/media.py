@@ -15,7 +15,7 @@ import time
 from urllib.parse import quote, unquote
 
 from .config import Config, Speaker
-from .const import DIRECT_PLAY_FORMATS
+from .const import BROWSER_PLAY_FORMATS, DIRECT_PLAY_FORMATS
 
 log = logging.getLogger("mibox")
 
@@ -63,6 +63,22 @@ class MediaService:
     def proxy_url(self, token: str) -> str:
         """DLNA 推送内容的缓冲代理 URL"""
         return f"{self.config.base_url()}/proxy/{token}"
+
+    # ---------------- 浏览器（本机播放） ----------------
+    @staticmethod
+    def browser_playable(abs_path: str) -> bool:
+        """浏览器能否直接解码这个文件"""
+        ext = os.path.splitext(abs_path)[1].lstrip(".").lower()
+        return ext in BROWSER_PLAY_FORMATS
+
+    async def ensure_browser_playable(self, abs_path: str) -> str:
+        """本地播放用的可播路径：能直解就返回空串，否则转码后返回缓存文件路径
+
+        返回空串表示"直接用原文件"，调用方据此拼 /music/ 地址。
+        """
+        if self.browser_playable(abs_path):
+            return ""
+        return await self._transcode(abs_path) or ""
 
     # ---------------- 元数据 ----------------
     def get_meta(self, abs_path: str) -> dict:

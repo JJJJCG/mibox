@@ -23,6 +23,7 @@ from core.buffer import BufferManager
 from core.config import Config, Speaker
 from core.const import LOG_NAME
 from core.library import MusicLibrary
+from core.local import LOCAL_DID, LocalPlayer
 from core.media import MediaService
 from core.player import Player
 from core.qr_login import QRLogin
@@ -56,7 +57,8 @@ class AppState:
         self.ai_bridge: AIBridge | None = None
         self.poller: ConversationPoller | None = None
         self.dispatcher: CommandDispatcher | None = None
-        self.ready = False
+        self.ready = False          # 本机播放可用（曲库 + 本地播放器就绪）
+        self.xiaomi_ready = False   # 小爱音箱链路就绪（登录 + 至少一台音箱）
         self.last_error = ""
         self._cleanup_task: asyncio.Task | None = None
         self.boot_task: asyncio.Task | None = None
@@ -88,6 +90,11 @@ class AppState:
             await asyncio.to_thread(self.library.scan)
             asyncio.create_task(asyncio.to_thread(self.library.attach_meta))
 
+            # 本机播放只靠曲库，不靠小米账号，先建好：即使没配账号/没选音箱，
+            # 浏览器里也照样能听歌（它同时是默认输出通道）。
+            self._ensure_local_player()
+            self.ready = True
+
             if not (cfg.cookie or (cfg.account and cfg.password)):
                 self.last_error = "尚未配置小米账号（或 cookie）"
                 log.warning(self.last_error)
@@ -112,19 +119,26 @@ class AppState:
 
             if cfg.enable_dlna:
                 self.dlna = DLNAServer(cfg, self.players, self.media, self.buffers)
-                for player in self.players.values():
+                # 只有真实音箱能当 DLNA 渲染器，本机播放不参与
+                for player in self.speaker_players().values():
                     self.dlna.register(player.speaker.did, player)
                 await self.dlna.start()
 
             if cfg.enable_voice:
-                speakers = [p.speaker for p in self.players.values()]
-                self.dispatcher = CommandDispatcher(
-                    cfg, self.players, self.library, self.ai_bridge
-                )
-                self.poller = ConversationPoller(cfg, self.auth, speakers, self.dispatcher)
-                await self.poller.start()
+                speakers = [p.speaker for p in self.speaker_players().values()]
+                if not speakers:
+                    log.warning("语音指令已开启但没有可用音箱，跳过")
+                else:
+                    self.dispatcher = CommandDispatcher(
+                        cfg, self.speaker_players(), self.library, self.ai_bridge
+                    )
+                    self.poller = ConversationPoller(
+                        cfg, self.auth, speakers, self.dispatcher
+                    )
+                    await self.poller.start()
 
             self.ready = True
+            self.xiaomi_ready = True
             self.last_error = ""
             return True
         except Exception as e:
@@ -132,8 +146,37 @@ class AppState:
             log.exception(self.last_error)
             return False
 
+    def _ensure_local_player(self) -> LocalPlayer:
+        """保证本机播放器存在，且排在设备列表最前（它是默认输出）"""
+        p = self.players.get(LOCAL_DID)
+        if p is None:
+            p = LocalPlayer(self.config, self.media)
+            p.volume = self.config.default_volume
+            # 插到最前面：界面与 state.player() 的默认回退都取第一个
+            self.players = {LOCAL_DID: p, **self.players}
+            log.info(f"播放器就绪: {p.speaker.name}（本机浏览器）")
+        return p
+
+    def speaker_players(self) -> dict[str, "Player"]:
+        """真实的小爱音箱，不含本机播放
+
+        语音分发、语音轮询与 DLNA 只认这些。本机播放是浏览器专属通道，
+        小爱不可能"投"到浏览器上，混进来会让语音指令落到错误的输出。
+        """
+        return {
+            d: p for d, p in self.players.items()
+            if not getattr(p, "is_local", False)
+        }
+
     def _build_players(self):
+        # 保留已有的本机播放器（可能已经在播），避免重建把队列冲掉
+        local = self.players.get(LOCAL_DID)
         self.players = {}
+        if local is not None:
+            self.players[LOCAL_DID] = local
+        else:
+            self._ensure_local_player()
+
         for sp in self.config.get_enabled_speakers():
             if not sp.device_id:
                 log.warning(f"音箱 {sp.name or sp.did} 缺少 device_id，跳过")
@@ -217,6 +260,7 @@ class AppState:
             self.ha_client = None
         await self.auth.close()
         self.ready = False
+        self.xiaomi_ready = False
 
     # ---------------- 查询辅助 ----------------
     def player(self, did: str) -> Player:
@@ -305,6 +349,7 @@ async def api_status():
     booting = state.boot_task is not None and not state.boot_task.done()
     return {
         "ready": state.ready,
+        "xiaomi_ready": state.xiaomi_ready,
         "booting": booting,
         "error": state.last_error,
         "hostname": state.config.hostname,
@@ -646,6 +691,36 @@ async def api_mode(did: str, request: Request):
     body = await request.json()
     state.player(did).set_mode(body.get("mode", "NORMAL"))
     return {"ok": True}
+
+
+@app.post("/api/player/{did}/sync")
+async def api_player_sync(did: str, request: Request):
+    """本机播放回报播放事件
+
+    本机播放的声音来自浏览器，服务端无从知道一首什么时候放完，只能由
+    浏览器在 `ended` 时回传一次，服务端据此推进队列（切下一首 / 循环）。
+    """
+    body = await request.json()
+    player = state.player(did)
+    if not getattr(player, "is_local", False):
+        raise HTTPException(status_code=400, detail="只有本机播放需要回报事件")
+
+    event = (body.get("event") or "").strip()
+    if event == "ended":
+        moved = await player.notify_ended()
+        return {"ok": True, "advanced": moved}
+    if event in ("playing", "paused", "stopped"):
+        # 多标签页/外部操作时的状态对齐，不作为切歌依据
+        if event == "playing" and player.state != "playing" and player.cur_item:
+            player.state = "playing"
+            if not player.started_at:
+                player.started_at = time.time()
+        elif event == "paused" and player.state == "playing":
+            player._paused_pos = float(player.elapsed())
+            player.state = "paused"
+            player.started_at = 0.0
+        return {"ok": True}
+    raise HTTPException(status_code=400, detail=f"未知事件 {event}")
 
 
 @app.get("/api/player/{did}/status")

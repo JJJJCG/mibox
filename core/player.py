@@ -41,11 +41,20 @@ class QueueItem:
     song: object = None     # 关联的 Song（本地歌曲）
 
     def to_dict(self):
-        return {"name": self.name, "duration": self.duration, "source": self.source}
+        d = {"name": self.name, "duration": self.duration, "source": self.source}
+        # url 供本机播放直接喂给 <audio>；rel 供界面回定位曲目
+        if self.song is not None:
+            d["rel"] = getattr(self.song, "rel", "")
+        if self.url:
+            d["url"] = self.url
+        return d
 
 
 class Player:
     """单台音箱的播放队列状态机"""
+
+    # 是否是"本机播放"（浏览器）通道；真实音箱为 False
+    is_local = False
 
     def __init__(
         self,
@@ -77,6 +86,9 @@ class Player:
         self._paused_pos = 0.0
         self._user_paused = False     # 是否由 mibox 主动暂停
         self._pause_at = 0.0
+        # 起播序号：每次真正开始播放都 +1。界面据此判断"要重新开始播"，
+        # 否则单曲循环时 URL 不变，播放端（<audio>）不会重播同一首。
+        self.play_id = 0
 
     # ---------------- 内部 ----------------
     def _cancel_timer(self):
@@ -283,8 +295,10 @@ class Player:
             self._user_paused = False
             remaining = max(1, (self.cur_item.duration or 0) - self._paused_pos)
             self._schedule_next(wait=remaining)
+            # 接了 HA 是 HA 续播；本机播放则是浏览器自己接着播
+            via = "HA " if self.controller.ha_active else ""
             log.info(
-                f"[{self.speaker.name}] 继续播放（HA 续播，剩余 {int(remaining)}s）"
+                f"[{self.speaker.name}] 继续播放（{via}续播，剩余 {int(remaining)}s）"
             )
             return
 
@@ -373,6 +387,8 @@ class Player:
             "total": len(self.queue),
             "current": self.cur_item.to_dict() if self.cur_item else None,
             "elapsed": self.elapsed(),
+            "play_id": self.play_id,
+            "is_local": self.is_local,
             "queue": [i.to_dict() for i in self.queue[:50]],
             # 控制与状态由谁提供：配了 HA 实体就是 home_assistant
             "status_source": "home_assistant" if self.controller.ha_active else "mina",
