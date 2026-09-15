@@ -587,7 +587,8 @@ async def api_play(did: str, request: Request):
     if "index" in body and body["index"] is not None:
         idx = int(body["index"])
         if 0 <= idx < len(player.queue):
-            await player.play_items(player.queue, idx)
+            # remember=False：items 就是当前队列本身，别用打乱后的顺序覆盖原始顺序
+            await player.play_items(player.queue, idx, remember=False)
             return {"ok": True, "index": idx}
         raise HTTPException(status_code=400, detail="索引越界")
 

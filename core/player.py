@@ -60,6 +60,7 @@ class Player:
         self.media = media
 
         self.queue: list[QueueItem] = []
+        self._order: list[QueueItem] = []   # 队列的原始顺序，切回"顺序播放"时还原
         self.index = -1
         self.mode = PLAY_MODE_NORMAL
         self.state = "idle"          # idle | playing | paused
@@ -147,12 +148,21 @@ class Player:
         self._timer = asyncio.create_task(_runner())
 
     # ---------------- 对外：队列操作 ----------------
-    async def play_items(self, items: list[QueueItem], start: int = 0):
-        """替换队列并从 start 开始播放"""
+    async def play_items(
+        self, items: list[QueueItem], start: int = 0, remember: bool = True
+    ):
+        """替换队列并从 start 开始播放
+
+        remember=False 用于"跳到队列里某一首"（items 就是当前队列本身），
+        此时不能覆盖 _order，否则随机模式下的原始顺序会被打乱顺序顶掉，
+        切回"顺序播放"就没得还原了。
+        """
         self._cancel_timer()
-        self.queue = items
-        self.index = max(0, min(start, len(items) - 1)) if items else -1
-        if not items:
+        self.queue = list(items)
+        if remember:
+            self._order = list(items)
+        self.index = max(0, min(start, len(self.queue) - 1)) if self.queue else -1
+        if not self.queue:
             self.state = "idle"
             self.cur_item = None
             return
@@ -161,12 +171,17 @@ class Player:
 
     async def play_songs(self, songs, start: int = 0):
         items = [QueueItem(name=s.name, song=s) for s in songs]
+        # 先记下列表原始顺序（供切回顺序播放时还原），再按模式决定是否整表打乱
+        self._order = list(items)
         if self.mode == PLAY_MODE_SHUFFLE:
             random.shuffle(items)
-        await self.play_items(items, start)
+        await self.play_items(items, start, remember=False)
 
     async def enqueue(self, item: QueueItem):
         self.queue.append(item)
+        # 原始顺序快照跟着一起追加，否则切回顺序播放时这首歌会凭空消失
+        if self._order:
+            self._order.append(item)
 
     async def next(self, auto: bool = False):
         if not self.queue:
@@ -296,7 +311,47 @@ class Player:
         self.volume = max(0, min(100, volume))
         await self.controller.set_volume(self.volume)
 
+    def _reshuffle_tail(self):
+        """打乱"当前曲目之后"的部分，正在播的这首留在原位
+
+        用尾部而不是整表，是因为整表打乱会让正在播的歌被换掉位置的语义变得
+        混乱；尾部打乱等价于"剩下的按随机顺序接着放"。
+        """
+        if not self.queue:
+            return
+        start = self.index + 1 if self.index >= 0 else 0
+        tail = self.queue[start:]
+        if len(tail) > 1:
+            random.shuffle(tail)
+            self.queue[start:] = tail
+
+    def _restore_order(self):
+        """从随机切回顺序：还原列表的原始顺序，正在播的那首继续当当前项"""
+        if not self._order:
+            return
+        cur = self.cur_item
+        self.queue = list(self._order)
+        if cur is not None:
+            for i, it in enumerate(self.queue):
+                if it is cur:
+                    self.index = i
+                    break
+
     def set_mode(self, mode: str):
+        """切换播放模式
+
+        之前这里只写 `self.mode = mode`，模式纯粹是个标签——正在播的列表
+        仍按原顺序往下走，于是"随机播放"看起来完全没生效（只有恰好"先切
+        随机、再点播放"才碰得上 play_songs 里那次整表打乱）。现在切到随机
+        会立刻打乱当前队列，切回顺序/循环则还原原顺序。
+        """
+        if mode == self.mode:
+            return
+        if self.queue:
+            if mode == PLAY_MODE_SHUFFLE:
+                self._reshuffle_tail()
+            elif self.mode == PLAY_MODE_SHUFFLE:
+                self._restore_order()
         self.mode = mode
 
     def elapsed(self) -> int:

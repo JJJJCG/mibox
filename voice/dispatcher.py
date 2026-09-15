@@ -134,7 +134,8 @@ class CommandDispatcher:
         if action == "play_index":
             idx = params.get("num", 1) - 1
             if 0 <= idx < len(player.queue):
-                await player.play_items(player.queue, idx)
+                # remember=False：跳到队列内某一首，别覆盖原始顺序
+                await player.play_items(player.queue, idx, remember=False)
             return
 
         if action == "next":

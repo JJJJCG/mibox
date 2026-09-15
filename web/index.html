@@ -127,7 +127,7 @@ button.danger{color:var(--err)}
           <option value="NORMAL">顺序播放 · 放完即停</option>
           <option value="REPEAT_ONE">单曲循环 · 这首重放</option>
           <option value="REPEAT_ALL">全部循环 · 放完重头</option>
-          <option value="SHUFFLE">随机播放 · 放完即停</option>
+          <option value="SHUFFLE">随机播放 · 打乱后放完即停</option>
         </select>
         <span class="hint">顺序与随机都是「列表放完就停」，只有全部循环会回头接着放</span>
       </div>
@@ -464,7 +464,11 @@ const fmt = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).pad
 async function ctl(a){ await post(`/api/player/${S.curDid}/control`,{action:a}); refresh(); }
 async function setVol(v){ document.getElementById('volVal').textContent=v;
   await post(`/api/player/${S.curDid}/volume`,{volume:+v}); }
-async function setMode(m){ await post(`/api/player/${S.curDid}/mode`,{mode:m}); }
+async function setMode(m){
+  // 切到随机后端会立即打乱队列，刷新一下让重排后的顺序即时可见
+  await post(`/api/player/${S.curDid}/mode`,{mode:m});
+  refresh();
+}
 async function jump(i){ await post(`/api/player/${S.curDid}/play`,{index:i}); refresh(); }
 
 async function loadLibrary(){
