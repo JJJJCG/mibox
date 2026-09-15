@@ -1,6 +1,6 @@
 """语音指令分发
 
-先匹配内置音乐指令，未命中再交给 HA 桥接（若启用）。
+先匹配内置音乐指令，未命中再交给 AI 桥接（关键词命中就转发给外部接口）。
 """
 
 from __future__ import annotations
@@ -33,11 +33,11 @@ def _clean_keyword(kw: str) -> str:
 
 class CommandDispatcher:
     def __init__(self, config, players: dict[str, Player], library: MusicLibrary,
-                 ha_bridge=None):
+                 ai_bridge=None):
         self.config = config
         self.players = players
         self.library = library
-        self.ha_bridge = ha_bridge
+        self.ai_bridge = ai_bridge
 
     def _player_for(self, did: str) -> Player | None:
         p = self.players.get(did)
@@ -70,12 +70,13 @@ class CommandDispatcher:
                 await self._run_music(player, action, params)
                 return
 
-        if self.ha_bridge is not None:
-            for cand in candidates:
-                ok = await self.ha_bridge.handle(cand)
-                if ok:
-                    log.info(f"[{player.speaker.name}] 语音: '{query}' -> HA 规则命中")
-                    return
+        # 音乐指令未命中 -> AI 桥接（原句匹配关键词，不做中文数字转换，
+        # 免得把要问的话本身改写掉）
+        if self.ai_bridge is not None:
+            ok = await self.ai_bridge.handle(query)
+            if ok:
+                log.info(f"[{player.speaker.name}] 语音: '{query}' -> AI 桥接")
+                return
 
         log.debug(f"未匹配任何指令: {query}")
 

@@ -128,7 +128,16 @@ class Config:
     # Home Assistant
     ha_url: str = ""
     ha_token: str = ""
-    ha_rules: list = field(default_factory=list)
+
+    # AI 桥接：关键词命中 -> 转发给外部接口 -> 用 HA 播报
+    ai_enabled: bool = False
+    ai_keywords: str = ""            # 换行或逗号分隔，命中即转发
+    ai_url: str = ""                 # 接口基址，如 http://192.168.31.145:9901
+    ai_token: str = ""               # 接口的 Bearer Token
+    ai_timeout: int = 300            # 等待接口回复的秒数（上限 3600）
+    ai_voice_hint: bool = True       # 带 hint:"voice"，让接口出口语短稿
+    ai_notify_entity: str = ""       # HA 播报实体，如 notify.xiaomi_cn_xxx_play_text_a_5_3
+    ai_ack: str = "好的"             # 转发后马上播的提示语（留空则不播）
 
     verbose: bool = False
 
@@ -160,6 +169,18 @@ class Config:
             self.ha_url = _env("HA_URL", "")
         if not self.ha_token:
             self.ha_token = _env("HA_TOKEN", "")
+        self.ai_enabled = _env_bool("AI_ENABLED", self.ai_enabled)
+        if not self.ai_keywords:
+            self.ai_keywords = _env("AI_KEYWORDS", "")
+        if not self.ai_url:
+            self.ai_url = _env("AI_URL", "")
+        if not self.ai_token:
+            self.ai_token = _env("AI_TOKEN", "")
+        self.ai_timeout = _env_int("AI_TIMEOUT", self.ai_timeout)
+        self.ai_voice_hint = _env_bool("AI_VOICE_HINT", self.ai_voice_hint)
+        if not self.ai_notify_entity:
+            self.ai_notify_entity = _env("AI_NOTIFY_ENTITY", "")
+        self.ai_ack = _env("AI_ACK", self.ai_ack)
         self.verbose = _env_bool("VERBOSE", self.verbose)
 
         if not self.hostname:

@@ -72,7 +72,7 @@ input[type=range]{width:180px}
     <button data-tab="library">音乐库</button>
     <button data-tab="devices">设备</button>
     <button data-tab="config">配置</button>
-    <button data-tab="ha">HA 规则</button>
+    <button data-tab="ai">AI 桥接</button>
   </div>
 
   <!-- 播放 -->
@@ -184,7 +184,8 @@ input[type=range]{width:180px}
       <div class="row">
         <div><label><input type="checkbox" id="cfgDlna"> DLNA 渲染器</label></div>
         <div><label><input type="checkbox" id="cfgVoice"> 语音指令</label></div>
-        <div><label><input type="checkbox" id="cfgHa"> HA 桥接</label></div>
+        <div><label><input type="checkbox" id="cfgHa"> 接入 Home Assistant（播报）</label></div>
+        <div><label><input type="checkbox" id="cfgAi"> AI 语音桥接</label></div>
       </div>
       <label>语音轮询间隔（秒）</label><input type="number" id="cfgPull" min="0.5" step="0.5" max="30">
     </div>
@@ -207,21 +208,56 @@ input[type=range]{width:180px}
     </div>
   </section>
 
-  <!-- HA 规则 -->
-  <section class="panel" id="tab-ha">
+  <!-- AI 桥接 -->
+  <section class="panel" id="tab-ai">
     <div class="card">
-      <h2>语音规则（JSON 数组）</h2>
+      <h2>关键词触发</h2>
+      <label>关键词（每行一个，或用逗号分隔）</label>
+      <textarea id="aiKeywords" style="min-height:80px" placeholder="问问&#10;问一下"></textarea>
       <div class="hint">
-        每条规则：<span class="mono">pattern</span> 为正则，可用 <span class="mono">(\d+)</span> 捕获数字，
-        用 <span class="mono">{0}</span> 引用；<span class="mono">delay_minutes</span> 表示延迟执行。
+        小爱听到包含关键词的话就把它转发给下面的接口；句首的关键词会自动剥掉，
+        只把真正要问的那句话发出去（出现在句子中间的关键词不剥）。
       </div>
-      <textarea id="haRules" spellcheck="false"></textarea>
       <div class="controls">
-        <button class="primary" onclick="saveRules()">保存规则</button>
-        <button class="ghost" onclick="fillExample()">填入示例</button>
-        <button class="ghost" onclick="testRule()">测试匹配</button>
-        <span class="hint" id="ruleMsg"></span>
+        <button class="ghost" onclick="testAiMatch()">测试匹配</button>
+        <span class="hint" id="aiMatchMsg"></span>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>接口</h2>
+      <div class="row">
+        <div><label>接口地址</label><input type="text" id="aiUrl" placeholder="http://192.168.31.145:9901"></div>
+        <div><label>Bearer Token</label><input type="password" id="aiToken" placeholder="留空则不修改"></div>
+      </div>
+      <div class="row">
+        <div><label>等待回复上限（秒）</label><input type="number" id="aiTimeout" min="5" max="3600"></div>
+        <div><label><input type="checkbox" id="aiVoiceHint"> 请求口语短稿（hint=voice，150 字内）</label></div>
+      </div>
+      <div class="hint">接口为 pi HTTP Bridge 时，地址填 <span class="mono">http://主机:9901</span>，Token 见 http-bridge.json。</div>
+      <div class="controls">
+        <button class="ghost" onclick="testAiAsk()">测试接口</button>
+        <span class="hint" id="aiTestMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>HA 播报</h2>
+      <label>播报实体（notify.*）</label>
+      <input type="text" id="aiNotifyEntity" placeholder="notify.xiaomi_cn_2118828500_oh2_play_text_a_5_3">
+      <label>转发后的提示语（立刻播，留空则不播）</label>
+      <input type="text" id="aiAck" placeholder="好的">
+      <div class="hint">命中关键词、把内容转发出去之后马上播这一句，让音箱立刻有回应。</div>
+      <div class="controls">
+        <button class="ghost" onclick="testSpeak()">试播一句</button>
+        <span class="hint" id="aiSpeakMsg"></span>
+      </div>
+    </div>
+
+    <div class="controls" style="margin-bottom:30px">
+      <button class="primary" onclick="saveAi()">保存设置</button>
+      <button class="ghost" onclick="doRestart()">应用并重启服务</button>
+      <span class="hint" id="aiMsg"></span>
     </div>
   </section>
 </main>
@@ -355,13 +391,34 @@ async function loadConfig(){
   document.getElementById('cfgDlna').checked = c.enable_dlna;
   document.getElementById('cfgVoice').checked = c.enable_voice;
   document.getElementById('cfgHa').checked = c.enable_ha;
+  document.getElementById('cfgAi').checked = c.ai_enabled;
   document.getElementById('cfgPull').value = c.pull_ask_sec;
   document.getElementById('cfgHaUrl').value = c.ha_url||'';
+  // AI 桥接
+  document.getElementById('aiKeywords').value = c.ai_keywords||'';
+  document.getElementById('aiUrl').value = c.ai_url||'';
+  document.getElementById('aiTimeout').value = c.ai_timeout;
+  document.getElementById('aiVoiceHint').checked = c.ai_voice_hint;
+  document.getElementById('aiNotifyEntity').value = c.ai_notify_entity||'';
+  document.getElementById('aiAck').value = c.ai_ack||'';
   // 敏感信息（密码/令牌/cookie）出于安全不回显，但明确告知已保存，避免误以为丢失
   document.getElementById('cfgHaToken').placeholder = c.has_ha_token ? '已保存，重新输入可覆盖' : '';
+  document.getElementById('aiToken').placeholder = c.has_ai_token ? '已保存，重新输入可覆盖' : '留空则不修改';
   document.getElementById('cfgPassword').placeholder = c.has_password ? '已保存，重新输入可覆盖' : '留空则不修改';
   document.getElementById('cfgCookie').placeholder = c.has_cookie ? '已保存，重新输入可覆盖' : 'userId=xxx;passToken=xxx';
   document.getElementById('haSaved').textContent = c.has_ha_token ? '令牌已保存在服务端（不回显）。' : '';
+}
+const numOr = (id, d) => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? d : v; };
+function aiBody(){
+  return {
+    ai_enabled: document.getElementById('cfgAi').checked,
+    ai_keywords: document.getElementById('aiKeywords').value,
+    ai_url: document.getElementById('aiUrl').value.trim(),
+    ai_timeout: numOr('aiTimeout', 300),
+    ai_voice_hint: document.getElementById('aiVoiceHint').checked,
+    ai_notify_entity: document.getElementById('aiNotifyEntity').value.trim(),
+    ai_ack: document.getElementById('aiAck').value,
+  };
 }
 async function saveConfig(){
   const body = {
@@ -375,6 +432,7 @@ async function saveConfig(){
     enable_ha:document.getElementById('cfgHa').checked,
     pull_ask_sec:+document.getElementById('cfgPull').value,
     ha_url:document.getElementById('cfgHaUrl').value,
+    ...aiBody(),
   };
   // 敏感字段（密码/cookie/令牌）在界面上不回显——空值表示"保持不变"，
   // 绝不能把空串发回去覆盖已保存的凭据（否则扫码登录会被清空）
@@ -384,6 +442,8 @@ async function saveConfig(){
   if(ck) body.cookie = ck;
   const tk = document.getElementById('cfgHaToken').value;
   if(tk) body.ha_token = tk;
+  const at = document.getElementById('aiToken').value;
+  if(at) body.ai_token = at;
   await post('/api/config', body);
   document.getElementById('cfgMsg').textContent = '已保存，点击"应用并重启服务"生效';
 }
@@ -443,43 +503,54 @@ async function cancelQr(){
   document.getElementById('qrMsg').textContent = '已取消';
 }
 
-const EXAMPLE = [
-  {pattern:"(打开|开)(客厅灯)",domain:"light",service:"turn_on",entity_id:"light.living_room",reply:"客厅灯已打开"},
-  {pattern:"(关闭|关)(客厅灯)",domain:"light",service:"turn_off",entity_id:"light.living_room",reply:"客厅灯已关闭"},
-  {pattern:"客厅灯调到(\\d+)[%％]",domain:"light",service:"turn_on",
-   entity_id:"light.living_room",data:{brightness_pct:"{0}"},reply:"亮度已调整"},
-  {pattern:"主卧空调设(\\d+)度",domain:"climate",service:"set_temperature",
-   entity_id:"climate.master_bedroom",data:{temperature:"{0}"},reply:"已设置温度"},
-  {pattern:"客厅空调(\\d+)分钟后关闭",domain:"climate",service:"turn_off",
-   entity_id:"climate.living_room",delay_minutes:0,reply:"稍后关闭"}
-];
-async function loadRules(){
-  const r = await api('/api/ha/rules');
-  document.getElementById('haRules').value = JSON.stringify(r.length?r:EXAMPLE,null,2);
-}
-async function saveRules(){
+async function saveAi(){
+  const body = aiBody();
+  const at = document.getElementById('aiToken').value;
+  if(at) body.ai_token = at;
   try{
-    const rules = JSON.parse(document.getElementById('haRules').value);
-    const r = await post('/api/ha/rules', rules);
-    document.getElementById('ruleMsg').textContent = '已保存 '+r.count+' 条';
-  }catch(e){ document.getElementById('ruleMsg').textContent = 'JSON 解析失败: '+e.message; }
+    await post('/api/config', body);
+    document.getElementById('aiMsg').textContent = '已保存，点击"应用并重启服务"生效';
+  }catch(e){ document.getElementById('aiMsg').textContent = '保存失败: '+e.message; }
 }
-function fillExample(){
-  document.getElementById('haRules').value = JSON.stringify(EXAMPLE,null,2);
-}
-async function testRule(){
-  const q = prompt('输入一句要说的话：');
+async function testAiMatch(){
+  const q = prompt('输入一句要说给小爱的话：');
   if(!q) return;
-  const r = await post('/api/ha/test-rule',{query:q});
-  document.getElementById('ruleMsg').textContent = r.matched
-    ? '命中: '+r.rule.domain+'.'+r.rule.service : '未命中任何规则';
+  const el = document.getElementById('aiMatchMsg');
+  try{
+    const r = await post('/api/ai/match', {query:q, keywords:document.getElementById('aiKeywords').value});
+    el.textContent = r.matched
+      ? ('命中「'+r.keyword+'」，转发内容：'+r.text)
+      : '未命中任何关键词';
+  }catch(e){ el.textContent = '失败: '+e.message; }
+}
+async function testAiAsk(){
+  const t = prompt('输入要转发给接口的内容：', '你好，用一句话介绍一下自己');
+  if(!t) return;
+  const el = document.getElementById('aiTestMsg');
+  el.textContent = '请求中…';
+  try{
+    const r = await post('/api/ai/test', {
+      text:t,
+      url:document.getElementById('aiUrl').value.trim(),
+      token:document.getElementById('aiToken').value
+    });
+    el.textContent = r.ok ? ('返回（'+r.ms+'ms）：'+r.reply) : ('失败: '+r.error);
+  }catch(e){ el.textContent = '失败: '+e.message; }
+}
+async function testSpeak(){
+  const m = prompt('输入要播报的文字：', '测试播报');
+  if(!m) return;
+  const el = document.getElementById('aiSpeakMsg');
+  try{
+    await post('/api/ai/speak', {message:m});
+    el.textContent = '已下发播报';
+  }catch(e){ el.textContent = '失败: '+e.message; }
 }
 
 refresh();
 // 未登录时部分接口会失败，逐个 catch 避免整体脚本中断
 loadLibrary().catch(()=>{});
 loadConfig().catch(()=>{});
-loadRules().catch(()=>{});
 loadDevices().catch(()=>{});
 setInterval(refresh, 5000);
 // 页面重新可见时立刻刷新一次

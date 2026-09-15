@@ -10,6 +10,7 @@ import contextlib
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -28,8 +29,8 @@ from core.qr_login import QRLogin
 from core.speaker import SpeakerController
 from core.streams import StreamManager, guess_content_type, parse_range
 from dlna.server import DLNAServer
+from ha.bridge import AIBridge, keywords_of
 from ha.client import HAClient
-from ha.rules import RuleEngine
 from voice.dispatcher import CommandDispatcher
 from voice.poller import ConversationPoller
 
@@ -51,7 +52,7 @@ class AppState:
         self.players: dict[str, Player] = {}     # did -> Player
         self.dlna: DLNAServer | None = None
         self.ha_client: HAClient | None = None
-        self.ha_engine: RuleEngine | None = None
+        self.ai_bridge: AIBridge | None = None
         self.poller: ConversationPoller | None = None
         self.dispatcher: CommandDispatcher | None = None
         self.ready = False
@@ -117,7 +118,7 @@ class AppState:
             if cfg.enable_voice:
                 speakers = [p.speaker for p in self.players.values()]
                 self.dispatcher = CommandDispatcher(
-                    cfg, self.players, self.library, self.ha_engine
+                    cfg, self.players, self.library, self.ai_bridge
                 )
                 self.poller = ConversationPoller(cfg, self.auth, speakers, self.dispatcher)
                 await self.poller.start()
@@ -147,10 +148,14 @@ class AppState:
 
     def _build_ha(self):
         cfg = self.config
-        if not cfg.enable_ha or not cfg.ha_url or not cfg.ha_token:
-            return
-        self.ha_client = HAClient(cfg.ha_url, cfg.ha_token)
-        self.ha_engine = RuleEngine(self.ha_client, cfg.ha_rules)
+        if cfg.enable_ha and cfg.ha_url and cfg.ha_token:
+            self.ha_client = HAClient(cfg.ha_url, cfg.ha_token)
+
+        # AI 桥接的播报走 HA，所以没有 HA 客户端时桥接只能"问得到、说不出"
+        if cfg.ai_enabled:
+            if self.ha_client is None:
+                log.warning("AI 桥接已开启但 HA 未配置（需地址 + 长期令牌），回答将无法播报")
+            self.ai_bridge = AIBridge(cfg, self.ha_client)
 
     async def reinit(self) -> bool:
         """配置变更后重新初始化"""
@@ -179,8 +184,12 @@ class AppState:
             await self.dlna.stop()
         for p in self.players.values():
             await p.close()
+        if self.ai_bridge:
+            await self.ai_bridge.close()
+            self.ai_bridge = None
         if self.ha_client:
             await self.ha_client.close()
+            self.ha_client = None
         await self.auth.close()
         self.ready = False
 
@@ -281,6 +290,8 @@ async def api_status():
         "enable_dlna": state.config.enable_dlna,
         "enable_voice": state.config.enable_voice,
         "enable_ha": state.config.enable_ha,
+        "enable_ai": state.config.ai_enabled,
+        "ai_ready": bool(state.ai_bridge and state.ai_bridge.configured),
         "players": [p.status() for p in state.players.values()],
     }
 
@@ -360,6 +371,15 @@ async def api_get_config():
         "ha_url": cfg.ha_url,
         "has_ha_token": bool(cfg.ha_token),
         "pull_ask_sec": cfg.pull_ask_sec,
+        # AI 桥接
+        "ai_enabled": cfg.ai_enabled,
+        "ai_keywords": cfg.ai_keywords,
+        "ai_url": cfg.ai_url,
+        "has_ai_token": bool(cfg.ai_token),
+        "ai_timeout": cfg.ai_timeout,
+        "ai_voice_hint": cfg.ai_voice_hint,
+        "ai_notify_entity": cfg.ai_notify_entity,
+        "ai_ack": cfg.ai_ack,
     }
 
 
@@ -369,12 +389,14 @@ async def api_save_config(request: Request):
     cfg = state.config
     # 敏感字段（前端不回显）：空值一律视为"未修改"，绝不能用空串
     # 覆盖已保存的凭据（否则一次普通保存就会把扫码登录清掉）
-    sensitive = ("password", "cookie", "ha_token")
+    sensitive = ("password", "cookie", "ha_token", "ai_token")
     for key in (
         "account", "password", "cookie", "mi_did", "hostname",
         "web_port", "dlna_port", "music_path", "default_volume",
         "enable_dlna", "enable_voice", "enable_ha", "ha_url",
         "ha_token", "pull_ask_sec",
+        "ai_enabled", "ai_keywords", "ai_url", "ai_token", "ai_timeout",
+        "ai_voice_hint", "ai_notify_entity", "ai_ack",
     ):
         if key not in data or data[key] is None:
             continue
@@ -492,21 +514,6 @@ async def api_player_status(did: str):
 
 
 # ==================== HA ====================
-@app.get("/api/ha/rules")
-async def api_ha_rules():
-    return state.config.ha_rules
-
-
-@app.post("/api/ha/rules")
-async def api_ha_save_rules(request: Request):
-    data = await request.json()
-    state.config.ha_rules = data if isinstance(data, list) else []
-    state.config.save()
-    if state.ha_engine:
-        state.ha_engine.set_rules(state.config.ha_rules)
-    return {"ok": True, "count": len(state.config.ha_rules)}
-
-
 @app.post("/api/ha/test")
 async def api_ha_test(request: Request):
     """用请求里带的配置（或当前配置）即时测试
@@ -531,22 +538,87 @@ async def api_ha_test(request: Request):
     return {"ok": ok, "message": msg}
 
 
-@app.post("/api/ha/test-rule")
-async def api_ha_test_rule(request: Request):
-    """用一句话试匹配规则，但不真正执行"""
-    body = await request.json()
-    query = body.get("query", "")
-    if not state.ha_engine:
-        raise HTTPException(status_code=400, detail="HA 未启用")
-    import re
+# ==================== AI 桥接 ====================
+@contextlib.asynccontextmanager
+async def _ai_bridge():
+    """测试用：优先复用运行中的桥接；未启用时按当前配置临时建一个
 
-    for rule in state.ha_engine.rules:
-        try:
-            if re.search(rule.get("pattern", ""), query):
-                return {"matched": True, "rule": rule}
-        except re.error:
-            continue
-    return {"matched": False}
+    临时实例只为读配置、发一次请求，用完即关，不会参与语音分发。
+    """
+    if state.ai_bridge is not None:
+        yield state.ai_bridge
+        return
+    tmp = AIBridge(state.config, state.ha_client)
+    try:
+        yield tmp
+    finally:
+        await tmp.close()
+
+
+@app.get("/api/ai/status")
+async def api_ai_status():
+    async with _ai_bridge() as bridge:
+        return bridge.status()
+
+
+@app.post("/api/ai/match")
+async def api_ai_match(request: Request):
+    """只试关键词匹配，不调用接口"""
+    body = await request.json()
+    query = (body.get("query") or "").strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="请输入要测试的语句")
+    kws = keywords_of(body["keywords"]) if body.get("keywords") is not None else None
+    async with _ai_bridge() as bridge:
+        hit = bridge.match(query, kws)
+    if hit is None:
+        return {"matched": False, "keyword": "", "text": ""}
+    return {"matched": True, "keyword": hit[0], "text": hit[1]}
+
+
+@app.post("/api/ai/test")
+async def api_ai_test(request: Request):
+    """真的调一次接口，拿回复（但不播报）"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="请输入要发送的内容")
+
+    url = (body.get("url") or state.config.ai_url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="请先填写接口地址")
+
+    t0 = time.time()
+    async with _ai_bridge() as bridge:
+        reply = await bridge.ask(text, url=url, token=(body.get("token") or "").strip())
+    return {
+        "ok": bool(reply),
+        "reply": reply,
+        "ms": int((time.time() - t0) * 1000),
+        "error": "" if reply else "接口没有返回内容，详见服务日志",
+    }
+
+
+@app.post("/api/ai/speak")
+async def api_ai_speak(request: Request):
+    """用当前配置播报一句，验证 notify 实体是否可用"""
+    body = await request.json()
+    msg = (body.get("message") or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="请输入要播报的文字")
+    if state.ha_client is None or not state.ha_client.configured:
+        raise HTTPException(status_code=400, detail="HA 未配置（需要地址与长期令牌）")
+    if not (state.config.ai_notify_entity or "").strip():
+        raise HTTPException(status_code=400, detail="未填写播报实体（notify.*）")
+
+    async with _ai_bridge() as bridge:
+        ok = await bridge.speak(msg)
+    if not ok:
+        raise HTTPException(status_code=400, detail="播报失败，详见服务日志")
+    return {"ok": True}
 
 
 # ==================== 媒体文件 ====================

@@ -31,6 +31,13 @@ services:
       # Home Assistant
       # MIBOX_HA_URL: "http://192.168.31.x:8123"
       # MIBOX_HA_TOKEN: "your_long_lived_token"
+      # AI 桥接：关键词命中 -> 转发给外部接口（如 pi HTTP Bridge）-> 用 HA 播报
+      # MIBOX_AI_ENABLED: "true"
+      # MIBOX_AI_KEYWORDS: "问问,问一下"
+      # MIBOX_AI_URL: "http://192.168.31.145:9901"
+      # MIBOX_AI_TOKEN: "pi_http_bridge_token"
+      # MIBOX_AI_NOTIFY_ENTITY: "notify.xiaomi_cn_xxx_oh2_play_text_a_5_3"
+      # MIBOX_AI_ACK: "好的"
       # MIBOX_VERBOSE: "true"
     volumes:
       - ./conf:/app/conf
