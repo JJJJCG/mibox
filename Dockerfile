@@ -2,8 +2,8 @@ FROM python:3.12-alpine
 
 LABEL description="mibox - play local music on Xiaomi AI speakers, with DLNA renderer and Home Assistant bridge"
 
-# ffmpeg 用于按需转码（部分型号不支持无损格式）
-RUN apk add --no-cache ffmpeg
+# ffmpeg 已移除：本项目接入的音箱（如 OH2）支持无损格式，无需转码；
+# 若接入 L05B/L05C/LX06/L16A 且曲库含无损文件，需改回 `apk add --no-cache ffmpeg`。
 
 WORKDIR /app
 
