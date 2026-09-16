@@ -21,7 +21,7 @@ from starlette.responses import Response, StreamingResponse
 from core.auth import AuthManager
 from core.buffer import BufferManager
 from core.config import Config, Speaker
-from core.const import LOG_NAME
+from core.const import ADMIN_COOKIE, ADMIN_PASSWORD, ADMIN_TOKEN, LOG_NAME
 from core.library import MusicLibrary
 from core.local import LOCAL_DID, LocalPlayer
 from core.media import MediaService
@@ -401,6 +401,53 @@ async def index():
     if not html.exists():
         return HTMLResponse("<h1>mibox</h1><p>前端文件缺失</p>")
     return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+# ==================== 后台 ====================
+def _admin_ok(request: Request) -> bool:
+    return request.cookies.get(ADMIN_COOKIE) == ADMIN_TOKEN
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_page():
+    """后台页：设备 / 配置 / AI 桥接
+
+    口令只是个形式（见 const.ADMIN_PASSWORD），页面自己拿口令换一个 cookie，
+    校验通过才把内容显示出来。这里照常把 HTML 发出去，不做服务端拦截。
+    """
+    html = WEB_DIR / "admin.html"
+    if not html.exists():
+        return HTMLResponse("<h1>mibox</h1><p>后台文件缺失</p>")
+    return HTMLResponse(html.read_text(encoding="utf-8"))
+
+
+@app.get("/api/admin/me")
+async def api_admin_me(request: Request):
+    return {"authed": _admin_ok(request)}
+
+
+@app.post("/api/admin/login")
+async def api_admin_login(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if str(body.get("password") or "") != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="口令不正确")
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        ADMIN_COOKIE, ADMIN_TOKEN,
+        max_age=7 * 24 * 3600, httponly=True, samesite="lax",
+    )
+    log.info("后台已登录")
+    return resp
+
+
+@app.post("/api/admin/logout")
+async def api_admin_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(ADMIN_COOKIE)
+    return resp
 
 
 # ==================== 状态 ====================

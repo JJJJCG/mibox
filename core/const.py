@@ -116,3 +116,11 @@ BUFFER_MAX_COUNT = 10                  # 同时最多保留 10 个缓冲
 BUFFER_MULTITHREAD_THRESHOLD = 5 * 1024 * 1024  # 超过 5MB 走多线程下载
 
 LOG_NAME = "mibox"
+
+# ---------------- 后台页面（/admin） ----------------
+# 设备 / 配置 / AI 桥接收在后台里，进门要输口令。
+# 口令明文写在代码里，**只是个形式，不是真实的访问控制**——接口本身没做鉴权，
+# 想改口令直接改这里即可。
+ADMIN_PASSWORD = "123456"
+ADMIN_COOKIE = "mibox_admin"
+ADMIN_TOKEN = "ok"

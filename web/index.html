@@ -4,122 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>mibox · 小爱音箱控制中心</title>
-<style>
-:root{
-  --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --text:#1c1f23; --muted:#6b7280;
-  --accent:#2563eb; --accent-soft:#eff4ff; --ok:#15803d; --warn:#b45309; --err:#b91c1c;
-  --radius:10px;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 24px;
-  display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
-header h1{font-size:16px;margin:0;font-weight:600}
-.badge{font-size:12px;padding:3px 10px;border-radius:20px;background:#eef0f3;color:var(--muted)}
-.badge.ok{background:#e7f6ec;color:var(--ok)}
-.badge.err{background:#fdecec;color:var(--err)}
-.badge.warn{background:#fdf3e3;color:var(--warn)}
-main{max-width:1080px;margin:0 auto;padding:20px}
-.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
-.tabs button{border:1px solid var(--line);background:var(--card);padding:7px 16px;
-  border-radius:var(--radius);cursor:pointer;font-size:13px;color:var(--muted)}
-.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff}
-.panel{display:none}
-.panel.active{display:block}
-.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
-  padding:18px;margin-bottom:14px}
-.card h2{font-size:14px;margin:0 0 14px;font-weight:600}
-label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
-input[type=text],input[type=password],input[type=number],select,textarea{
-  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
-  font-size:13px;background:#fff;color:var(--text)}
-textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;min-height:120px}
-.row{display:flex;gap:12px;flex-wrap:wrap}
-.row>div{flex:1;min-width:180px}
-button.primary{background:var(--accent);color:#fff;border:none;padding:9px 18px;
-  border-radius:8px;cursor:pointer;font-size:13px}
-button.ghost{background:var(--card);color:var(--text);border:1px solid var(--line);
-  padding:9px 18px;border-radius:8px;cursor:pointer;font-size:13px}
-button:disabled{opacity:.5;cursor:not-allowed}
-.hint{font-size:12px;color:var(--muted);margin-top:6px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
-th{color:var(--muted);font-weight:500;font-size:12px}
-tr.clickable{cursor:pointer}
-tr.clickable:hover{background:var(--accent-soft)}
-.now{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.now .title{font-size:15px;font-weight:600}
-.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
-input[type=range]{width:180px}
-.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
-.empty{color:var(--muted);font-size:13px;padding:16px 0}
-/* 音乐库：四个标签 + 分组表 + 行内操作 */
-.libtabs{margin:0 0 12px}
-.libtabs button{padding:6px 14px;font-size:13px}
-.libview{display:none}
-.libview.active{display:block}
-.songtable td,.grouptable td{vertical-align:middle}
-.grouptable .gname{font-weight:500}
-.ops{white-space:nowrap;text-align:right}
-button.mini{padding:4px 10px;font-size:12px}
-button.danger{color:var(--err)}
-.pickmenu{position:fixed;z-index:60;background:var(--card);border:1px solid var(--line);
-  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;
-  min-width:180px;max-height:300px;overflow:auto;display:none}
-.pickmenu button{display:block;width:100%;text-align:left;background:none;border:none;
-  padding:7px 10px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--text)}
-.pickmenu button:hover{background:var(--accent-soft)}
-.pickmenu .sep{height:1px;background:var(--line);margin:5px 0}
-.toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,12px);z-index:70;
-  background:#1f2937;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;
-  box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
-  transition:opacity .18s,transform .18s;max-width:70vw}
-.toast.show{opacity:1;transform:translate(-50%,0)}
-.toast.err{background:var(--err)}
-/* 本机播放 */
-.localnote{font-size:12px;color:var(--muted);margin-top:6px}
-.prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:10px}
-.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
-#audioGate{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:80;
-  background:var(--accent);color:#fff;border:none;padding:11px 20px;border-radius:24px;
-  font-size:14px;cursor:pointer;box-shadow:0 8px 24px rgba(37,99,235,.35);display:none}
-/* 展开出来的歌曲表：紧贴在被点击那一行的下面 */
-.sublist{background:var(--accent-soft);border-radius:8px;padding:10px 12px;margin:2px 0 6px}
-.sublist .hint{margin:0 0 6px}
-/* 移动端底部迷你播放条（默认隐藏，窄屏才出现） */
-.minibar{display:none}
-@media (max-width:640px){
-  header{padding:10px 14px;gap:8px;flex-wrap:wrap}
-  header h1{font-size:15px}
-  main{padding:12px 12px 104px}
-  .card{padding:14px}
-  .tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
-  .tabs button{white-space:nowrap;flex:0 0 auto}
-  .row>div{min-width:100%}
-  input[type=range]{width:100%}
-  /* 窄屏放不下歌手/文件夹两列，留歌名、时长和操作 */
-  .songtable th:nth-child(3),.songtable td:nth-child(3),
-  .songtable th:nth-child(4),.songtable td:nth-child(4){display:none}
-  #devTable th:nth-child(4),#devTable td:nth-child(4){display:none}
-  th,td{padding:9px 6px}
-  button.mini{padding:6px 12px;font-size:13px}
-  .controls>select,#selDevice{max-width:100%!important;flex:1}
-  #devTable select{max-width:100%!important}
-  #devTable td:nth-child(2){max-width:38vw;word-break:break-all}
-  .minibar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;
-    background:var(--card);border-top:1px solid var(--line);padding:10px 12px;
-    align-items:center;gap:10px;box-shadow:0 -2px 12px rgba(0,0,0,.06)}
-  .minibar .prog{position:absolute;left:0;right:0;top:0;margin:0;border-radius:0;height:3px}
-  .minibar .mt{flex:1;min-width:0}
-  .minibar .mt .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .minibar .mt .s{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .minibar button{background:var(--card);border:1px solid var(--line);border-radius:8px;
-    width:40px;height:40px;font-size:16px;cursor:pointer;flex:0 0 auto;color:var(--text)}
-  .pickmenu{max-width:calc(100vw - 16px)}
-  .toast{bottom:88px;max-width:88vw}
-}
-</style>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header>
@@ -129,15 +14,13 @@ button.danger{color:var(--err)}
   <span class="badge" id="badgeLib">音乐 0</span>
   <span style="flex:1"></span>
   <span class="badge mono" id="badgeHost"></span>
+  <a class="adminlink" href="/admin">后台</a>
 </header>
 
 <main>
   <div class="tabs" id="mainTabs">
     <button class="active" data-tab="play">播放</button>
     <button data-tab="library">音乐库</button>
-    <button data-tab="devices">设备</button>
-    <button data-tab="config">配置</button>
-    <button data-tab="ai">AI 桥接</button>
   </div>
 
   <!-- 播放 -->
@@ -238,190 +121,16 @@ button.danger{color:var(--err)}
     </div>
   </section>
 
-  <!-- 设备 -->
-  <section class="panel" id="tab-devices">
-    <div class="card">
-      <h2>选择要接入的音箱</h2>
-      <div class="hint">
-        「本机播放（浏览器）」是默认输出，始终可用、不需要勾选：在浏览器里点播，
-        声音从打开页面的这台设备出来。对小爱说话时仍由下面勾选的音箱出声——
-        两条通道互不干扰。
-      </div>
-      <table id="devTable" style="margin-top:10px">
-        <thead><tr><th style="width:44px">启用</th><th>名称</th><th>型号</th><th>DID</th><th style="width:250px">HA 媒体实体</th></tr></thead>
-        <tbody id="devList"></tbody>
-      </table>
-      <div class="hint">
-        选上 HA 实体后，这台音箱的暂停 / 继续 / 停止与状态读取都由 HA 实体负责
-        （需要在「配置 → 模块开关」里打开「用 HA 接管播放控制」）。
-        留空则继续走小米 API。
-      </div>
-      <div class="controls">
-        <button class="primary" onclick="saveDevices()">保存选择</button>
-        <button class="ghost" onclick="loadDevices(true)">重新加载</button>
-        <span class="hint" id="devMsg"></span>
-      </div>
-    </div>
-  </section>
-
-  <!-- 配置 -->
-  <section class="panel" id="tab-config">
-    <div class="card">
-      <h2>小米账号</h2>
-
-      <div class="controls" style="margin-top:0">
-        <button class="primary" onclick="startQr()">米家 App 扫码登录</button>
-        <button class="ghost" onclick="cancelQr()">取消</button>
-        <span class="hint" id="qrMsg">推荐：用米家 App 扫码，可绕开短信验证</span>
-      </div>
-      <div id="qrBox" style="display:none;margin-top:14px">
-        <img id="qrImg" alt="扫码登录" style="width:200px;height:200px;border:1px solid var(--line);border-radius:8px;background:#fff">
-        <div class="hint" id="qrHint">等待扫码…</div>
-      </div>
-
-      <div class="row" style="margin-top:16px">
-        <div><label>账号（可选）</label><input type="text" id="cfgAccount"></div>
-        <div><label>密码（可选）</label><input type="password" id="cfgPassword" placeholder="留空则不修改"></div>
-      </div>
-      <label>Cookie（扫码成功后自动填入，也可手动粘贴）</label>
-      <input type="text" id="cfgCookie" placeholder="userId=xxx;passToken=xxx">
-      <div class="hint">扫码成功后会自动填入 userId 与 passToken，无需手动操作。</div>
-    </div>
-    <div class="card">
-      <h2>网络与路径</h2>
-      <div class="row">
-        <div><label>局域网地址（音箱用它拼 URL，务必正确）</label><input type="text" id="cfgHost"></div>
-        <div><label>Web 端口</label><input type="number" id="cfgWebPort"></div>
-        <div><label>DLNA 端口</label><input type="number" id="cfgDlnaPort"></div>
-      </div>
-      <label>音乐目录</label><input type="text" id="cfgMusicPath">
-      <div class="hint">容器必须使用 host 网络，SSDP 组播与 mDNS 才能正常工作。</div>
-    </div>
-    <div class="card">
-      <h2>模块开关</h2>
-      <div class="row">
-        <div><label><input type="checkbox" id="cfgDlna"> DLNA 渲染器</label></div>
-        <div><label><input type="checkbox" id="cfgVoice"> 语音指令</label></div>
-        <div><label><input type="checkbox" id="cfgHa"> 接入 Home Assistant（播报）</label></div>
-        <div><label><input type="checkbox" id="cfgHaControl"> 用 HA 接管播放控制</label></div>
-        <div><label><input type="checkbox" id="cfgAi"> AI 语音桥接</label></div>
-      </div>
-      <div class="hint">
-        「用 HA 接管播放控制」打开后，已配 HA 实体的音箱：暂停 / 继续 / 停止
-        与音量都走 HA 的 media_player 实体，状态也改从 HA 读（不再每几秒打
-        小米云）；未配实体的音箱照旧走小米 API。音量写完会回读校验，
-        对不上自动回落小米 API。
-      </div>
-      <div class="row">
-        <div><label>语音轮询间隔（秒）</label><input type="number" id="cfgPull" min="0.5" step="0.5" max="30"></div>
-        <div><label>HA 状态读取间隔（秒）</label><input type="number" id="cfgHaPoll" min="0.5" step="0.5" max="30"></div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Home Assistant</h2>
-      <div class="row">
-        <div><label>HA 地址</label><input type="text" id="cfgHaUrl" placeholder="http://192.168.31.x:8123"></div>
-        <div><label>长期访问令牌</label><input type="password" id="cfgHaToken"></div>
-      </div>
-      <div class="hint" id="haSaved"></div>
-      <div class="controls">
-        <button class="ghost" onclick="testHa()">测试连接</button>
-        <button class="ghost" onclick="loadHaEntities()">刷新实体列表</button>
-        <span class="hint" id="haTestMsg"></span>
-      </div>
-      <div class="hint">
-        音箱对应的媒体实体在「设备」页里逐台选择。注意官方米家集成给小爱的
-        media_player 没有「停止」能力位，所以停止是「断流 + 暂停」组合实现的
-        （音箱本来也不认云端停止指令）。
-      </div>
-    </div>
-    <div class="controls" style="margin-bottom:30px">
-      <button class="primary" onclick="saveConfig()">保存配置</button>
-      <button class="ghost" onclick="doRestart()">应用并重启服务</button>
-      <span class="hint" id="cfgMsg"></span>
-    </div>
-  </section>
-
-  <!-- AI 桥接 -->
-  <section class="panel" id="tab-ai">
-    <div class="card">
-      <h2>关键词触发</h2>
-      <label>关键词（每行一个，或用逗号分隔）</label>
-      <textarea id="aiKeywords" style="min-height:80px" placeholder="问问&#10;问一下"></textarea>
-      <div class="hint">
-        小爱听到包含关键词的话就把它转发给下面的接口；句首的关键词会自动剥掉，
-        只把真正要问的那句话发出去（出现在句子中间的关键词不剥）。
-      </div>
-      <div class="controls">
-        <button class="ghost" onclick="testAiMatch()">测试匹配</button>
-        <span class="hint" id="aiMatchMsg"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>接口</h2>
-      <div class="row">
-        <div><label>接口地址</label><input type="text" id="aiUrl" placeholder="http://192.168.31.145:9901"></div>
-        <div><label>Bearer Token</label><input type="password" id="aiToken" placeholder="留空则不修改"></div>
-      </div>
-      <div class="row">
-        <div><label>等待回复上限（秒）</label><input type="number" id="aiTimeout" min="5" max="3600"></div>
-        <div><label><input type="checkbox" id="aiVoiceHint"> 请求口语短稿（hint=voice，150 字内）</label></div>
-      </div>
-      <div class="hint">接口为 pi HTTP Bridge 时，地址填 <span class="mono">http://主机:9901</span>，Token 见 http-bridge.json。</div>
-      <div class="controls">
-        <button class="ghost" onclick="testAiAsk()">测试接口</button>
-        <span class="hint" id="aiTestMsg"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>HA 播报</h2>
-      <label>播报实体（notify.*）</label>
-      <input type="text" id="aiNotifyEntity" placeholder="notify.xiaomi_cn_2118828500_oh2_play_text_a_5_3">
-      <label>转发后的提示语（立刻播，留空则不播）</label>
-      <input type="text" id="aiAck" placeholder="好的">
-      <div class="hint">命中关键词、把内容转发出去之后马上播这一句，让音箱立刻有回应。</div>
-      <div class="controls">
-        <button class="ghost" onclick="testSpeak()">试播一句</button>
-        <span class="hint" id="aiSpeakMsg"></span>
-      </div>
-    </div>
-
-    <div class="controls" style="margin-bottom:30px">
-      <button class="primary" onclick="saveAi()">保存设置</button>
-      <button class="ghost" onclick="doRestart()">应用并重启服务</button>
-      <span class="hint" id="aiMsg"></span>
-    </div>
-  </section>
 </main>
 
+<script src="/static/common.js"></script>
 <script>
-let S = {players:[], devices:[], curDid:null, cur:null, metaBase:'',
-         lastLibCount:null, lastLogin:null, playlistCounts:{}};
+let S = {players:[], curDid:null, cur:null, metaBase:'',
+         lastLibCount:null, playlistCounts:{}};
 let activeLib = 'songs';   // 音乐库当前标签：songs | folders | artists | playlists
 const DID_KEY = 'mibox.did';   // 记住上次选的输出设备（本机播放存成 'local'）
 
-// 每个标签页一个会话号：本机播放的队列与播放状态按会话隔离，所以一台设备上的
-// 操作不会影响另一台。放在 sessionStorage 而不是 localStorage，是为了让同一台
-// 设备开多个标签页时也各播各的——共用一个会话的话两个页面会同时出声。
-const SID = (() => {
-  let v = sessionStorage.getItem('mibox.sid');
-  if(!v){
-    v = Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4);
-    sessionStorage.setItem('mibox.sid', v);
-  }
-  return v;
-})();
 
-async function api(url, opts){
-  opts = opts || {};
-  opts.headers = Object.assign({'X-Mibox-Session': SID}, opts.headers || {});
-  const r = await fetch(url, opts);
-  if(!r.ok){ throw new Error((await r.text()).slice(0,200)); }
-  return r.json();
-}
-const post = (u,b) => api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
 
 document.querySelectorAll('#mainTabs button').forEach(b=>{
   b.onclick = () => {
@@ -430,7 +139,6 @@ document.querySelectorAll('#mainTabs button').forEach(b=>{
     b.classList.add('active');
     document.getElementById('tab-'+b.dataset.tab).classList.add('active');
     const t = b.dataset.tab;
-    if(t === 'devices'){ loadDevices().catch(()=>{}); }
     if(t === 'library'){ loadLibrary().catch(()=>{}); }
   };
 });
@@ -476,15 +184,6 @@ async function refresh(){
       loadLibrary().catch(()=>{});
     }
     S.lastLibCount = st.library_count;
-    // 登录态变化时刷新设备列表（30s 节流：登录态抖动时不至于连环拉取）
-    if(S.lastLogin !== null && st.logged_in !== S.lastLogin){
-      const now = Date.now();
-      if(now - (S.lastAutoDevices||0) > 30000){
-        S.lastAutoDevices = now;
-        loadDevices().catch(()=>{});
-      }
-    }
-    S.lastLogin = st.logged_in;
 
     const sel = document.getElementById('selDevice');
     // 用 did 列表当签名：只比数量会在"音箱增减但总数不变"时漏掉重建
@@ -554,7 +253,6 @@ function renderPlayer(p){
   renderMini(p);
   updateLocalProgress();
 }
-const fmt = s => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 
 /* ---------- 本机播放：服务端管队列，浏览器负责出声 ---------- */
 let AUDIO = null;      // <audio> 元素
@@ -683,10 +381,6 @@ async function loadLibrary(){
 }
 
 /* ---------- 通用行渲染 ---------- */
-function esc(s){
-  return String(s==null?'':s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
 function songRows(songs, fromPlaylist){
   if(!songs || !songs.length) return '<tr><td class="hint">没有曲目</td></tr>';
   return songs.map((s,i)=>`<tr>
@@ -887,235 +581,10 @@ async function addToPlaylist(name, rel){
   }catch(e){ toast('加入失败: '+e.message, true); }
 }
 
-/* ---------- 轻提示 ---------- */
-let toastTimer = null;
-function toast(msg, isErr){
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = 'toast show' + (isErr ? ' err' : '');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>{ el.className = 'toast'; }, 2400);
-}
-
-let HA_ENTITIES = [];
-async function loadHaEntities(){
-  // HA 没配好时这个接口会报错，界面照常可用，下拉里就只有"不用"
-  try{ HA_ENTITIES = await api('/api/ha/media_players'); }
-  catch(e){ HA_ENTITIES = []; }
-  return HA_ENTITIES;
-}
-function haOptions(cur){
-  const opts = ['<option value="">不用（走小米 API）</option>'];
-  for(const e of HA_ENTITIES){
-    const label = `${e.name} · ${e.entity_id.replace('media_player.','')}（${e.state}）`;
-    opts.push(`<option value="${e.entity_id}" ${e.entity_id===cur?'selected':''}>${label}</option>`);
-  }
-  // 已保存但这次没拉到的实体也别丢，免得一次保存就被清空
-  if(cur && !HA_ENTITIES.some(e=>e.entity_id===cur)){
-    opts.push(`<option value="${cur}" selected>${cur}（未在列表中找到）</option>`);
-  }
-  return opts.join('');
-}
-async function loadDevices(force){
-  if(force || !HA_ENTITIES.length) await loadHaEntities();
-  S.devices = await api('/api/devices');
-  document.getElementById('devList').innerHTML = S.devices.map(d=>
-    `<tr><td><input type="checkbox" data-did="${d.did}" ${d.selected?'checked':''}></td>
-     <td>${d.name||'-'}</td><td>${d.hardware||'-'}</td><td class="mono">${d.did.slice(0,18)}</td>
-     <td><select data-hadid="${d.did}" style="max-width:240px">${haOptions(d.ha_entity||'')}</select></td></tr>`).join('');
-  document.getElementById('devMsg').textContent = HA_ENTITIES.length
-    ? `HA 里找到 ${HA_ENTITIES.length} 个媒体实体` : '未能读取 HA 实体列表（可先配好 HA 地址与令牌）';
-}
-async function saveDevices(){
-  const rows = [...document.querySelectorAll('#devList tr')];
-  const boxes = rows.map(r=>r.querySelector('input[type=checkbox]')).filter(Boolean);
-  const dids = boxes.filter(cb=>cb.checked).map(cb=>cb.dataset.did);
-  await post('/api/config',{mi_did:dids.join(',')});
-  // 只保存勾选了的音箱，免得往配置里塞没启用的 did
-  for(const cb of boxes){
-    if(!cb.checked) continue;
-    const sel = document.querySelector(`select[data-hadid="${cb.dataset.did}"]`);
-    await post('/api/speakers',{did:cb.dataset.did, ha_entity:sel?sel.value:''});
-  }
-  await doRestart();
-}
-
-async function loadConfig(){
-  const c = await api('/api/config');
-  document.getElementById('cfgAccount').value = c.account||'';
-  document.getElementById('cfgCookie').value = '';
-  document.getElementById('cfgHost').value = c.hostname||'';
-  document.getElementById('cfgWebPort').value = c.web_port;
-  document.getElementById('cfgDlnaPort').value = c.dlna_port;
-  document.getElementById('cfgMusicPath').value = c.music_path||'';
-  document.getElementById('cfgDlna').checked = c.enable_dlna;
-  document.getElementById('cfgVoice').checked = c.enable_voice;
-  document.getElementById('cfgHa').checked = c.enable_ha;
-  document.getElementById('cfgHaControl').checked = c.ha_control;
-  document.getElementById('cfgAi').checked = c.ai_enabled;
-  document.getElementById('cfgPull').value = c.pull_ask_sec;
-  document.getElementById('cfgHaPoll').value = c.ha_poll_sec;
-  document.getElementById('cfgHaUrl').value = c.ha_url||'';
-  // AI 桥接
-  document.getElementById('aiKeywords').value = c.ai_keywords||'';
-  document.getElementById('aiUrl').value = c.ai_url||'';
-  document.getElementById('aiTimeout').value = c.ai_timeout;
-  document.getElementById('aiVoiceHint').checked = c.ai_voice_hint;
-  document.getElementById('aiNotifyEntity').value = c.ai_notify_entity||'';
-  document.getElementById('aiAck').value = c.ai_ack||'';
-  // 敏感信息（密码/令牌/cookie）出于安全不回显，但明确告知已保存，避免误以为丢失
-  document.getElementById('cfgHaToken').placeholder = c.has_ha_token ? '已保存，重新输入可覆盖' : '';
-  document.getElementById('aiToken').placeholder = c.has_ai_token ? '已保存，重新输入可覆盖' : '留空则不修改';
-  document.getElementById('cfgPassword').placeholder = c.has_password ? '已保存，重新输入可覆盖' : '留空则不修改';
-  document.getElementById('cfgCookie').placeholder = c.has_cookie ? '已保存，重新输入可覆盖' : 'userId=xxx;passToken=xxx';
-  document.getElementById('haSaved').textContent = c.has_ha_token ? '令牌已保存在服务端（不回显）。' : '';
-}
-const numOr = (id, d) => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? d : v; };
-function aiBody(){
-  return {
-    ai_enabled: document.getElementById('cfgAi').checked,
-    ai_keywords: document.getElementById('aiKeywords').value,
-    ai_url: document.getElementById('aiUrl').value.trim(),
-    ai_timeout: numOr('aiTimeout', 300),
-    ai_voice_hint: document.getElementById('aiVoiceHint').checked,
-    ai_notify_entity: document.getElementById('aiNotifyEntity').value.trim(),
-    ai_ack: document.getElementById('aiAck').value,
-  };
-}
-async function saveConfig(){
-  const body = {
-    account:document.getElementById('cfgAccount').value,
-    hostname:document.getElementById('cfgHost').value,
-    web_port:+document.getElementById('cfgWebPort').value,
-    dlna_port:+document.getElementById('cfgDlnaPort').value,
-    music_path:document.getElementById('cfgMusicPath').value,
-    enable_dlna:document.getElementById('cfgDlna').checked,
-    enable_voice:document.getElementById('cfgVoice').checked,
-    enable_ha:document.getElementById('cfgHa').checked,
-    ha_control:document.getElementById('cfgHaControl').checked,
-    ha_poll_sec:numOr('cfgHaPoll', 2),
-    pull_ask_sec:+document.getElementById('cfgPull').value,
-    ha_url:document.getElementById('cfgHaUrl').value,
-    ...aiBody(),
-  };
-  // 敏感字段（密码/cookie/令牌）在界面上不回显——空值表示"保持不变"，
-  // 绝不能把空串发回去覆盖已保存的凭据（否则扫码登录会被清空）
-  const pw = document.getElementById('cfgPassword').value;
-  if(pw) body.password = pw;
-  const ck = document.getElementById('cfgCookie').value;
-  if(ck) body.cookie = ck;
-  const tk = document.getElementById('cfgHaToken').value;
-  if(tk) body.ha_token = tk;
-  const at = document.getElementById('aiToken').value;
-  if(at) body.ai_token = at;
-  await post('/api/config', body);
-  document.getElementById('cfgMsg').textContent = '已保存，点击"应用并重启服务"生效';
-}
-async function doRestart(){
-  const r = await post('/api/restart');
-  document.getElementById('cfgMsg').textContent = r.ok?'已重启':('失败: '+r.error);
-  refresh();
-}
-async function testHa(){
-  try{
-    // 带上输入框里的值，未保存也能直接测
-    const r = await post('/api/ha/test',{
-      url: document.getElementById('cfgHaUrl').value,
-      token: document.getElementById('cfgHaToken').value
-    });
-    document.getElementById('haTestMsg').textContent = r.ok?('连接成功: '+r.message):('失败: '+r.message);
-  }catch(e){ document.getElementById('haTestMsg').textContent = '失败: '+e.message; }
-}
-
-let qrTimer = null;
-async function startQr(){
-  const msg = document.getElementById('qrMsg');
-  msg.textContent = '正在获取二维码…';
-  try{
-    const r = await post('/api/qr/start');
-    if(r.status === 'error'){
-      msg.textContent = r.message || '获取二维码失败';
-      return;
-    }
-    document.getElementById('qrImg').src = r.qr;
-    document.getElementById('qrBox').style.display = 'block';
-    document.getElementById('qrHint').textContent = '等待扫码…';
-    msg.textContent = '';
-    if(qrTimer) clearInterval(qrTimer);
-    qrTimer = setInterval(pollQr, 1500);
-  }catch(e){ msg.textContent = '失败: ' + e.message; }
-}
-async function pollQr(){
-  try{
-    const r = await api('/api/qr/status');
-    document.getElementById('qrHint').textContent = r.message || '';
-    if(r.status === 'success'){
-      clearInterval(qrTimer); qrTimer = null;
-      document.getElementById('qrBox').style.display = 'none';
-      document.getElementById('qrMsg').textContent = '扫码成功，正在初始化设备…';
-      setTimeout(()=>{ refresh(); loadDevices(); }, 4000);
-    } else if(r.status === 'expired' || r.status === 'error'){
-      clearInterval(qrTimer); qrTimer = null;
-      document.getElementById('qrMsg').textContent = r.message || '扫码失败';
-    }
-  }catch(e){ /* 轮询抖动忽略 */ }
-}
-async function cancelQr(){
-  if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
-  await post('/api/qr/cancel');
-  document.getElementById('qrBox').style.display = 'none';
-  document.getElementById('qrMsg').textContent = '已取消';
-}
-
-async function saveAi(){
-  const body = aiBody();
-  const at = document.getElementById('aiToken').value;
-  if(at) body.ai_token = at;
-  try{
-    await post('/api/config', body);
-    document.getElementById('aiMsg').textContent = '已保存，点击"应用并重启服务"生效';
-  }catch(e){ document.getElementById('aiMsg').textContent = '保存失败: '+e.message; }
-}
-async function testAiMatch(){
-  const q = prompt('输入一句要说给小爱的话：');
-  if(!q) return;
-  const el = document.getElementById('aiMatchMsg');
-  try{
-    const r = await post('/api/ai/match', {query:q, keywords:document.getElementById('aiKeywords').value});
-    el.textContent = r.matched
-      ? ('命中「'+r.keyword+'」，转发内容：'+r.text)
-      : '未命中任何关键词';
-  }catch(e){ el.textContent = '失败: '+e.message; }
-}
-async function testAiAsk(){
-  const t = prompt('输入要转发给接口的内容：', '你好，用一句话介绍一下自己');
-  if(!t) return;
-  const el = document.getElementById('aiTestMsg');
-  el.textContent = '请求中…';
-  try{
-    const r = await post('/api/ai/test', {
-      text:t,
-      url:document.getElementById('aiUrl').value.trim(),
-      token:document.getElementById('aiToken').value
-    });
-    el.textContent = r.ok ? ('返回（'+r.ms+'ms）：'+r.reply) : ('失败: '+r.error);
-  }catch(e){ el.textContent = '失败: '+e.message; }
-}
-async function testSpeak(){
-  const m = prompt('输入要播报的文字：', '测试播报');
-  if(!m) return;
-  const el = document.getElementById('aiSpeakMsg');
-  try{
-    await post('/api/ai/speak', {message:m});
-    el.textContent = '已下发播报';
-  }catch(e){ el.textContent = '失败: '+e.message; }
-}
 
 refresh();
 // 未登录时部分接口会失败，逐个 catch 避免整体脚本中断
 loadLibrary().catch(()=>{});
-loadConfig().catch(()=>{});
-loadDevices().catch(()=>{});
 setInterval(refresh, 5000);
 // 页面重新可见时立刻刷新一次
 document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) refresh(); });

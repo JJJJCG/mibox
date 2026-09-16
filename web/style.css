@@ -1,0 +1,124 @@
+/* mibox 前端共用样式：主页面（播放/音乐库）与后台页（设备/配置/AI）都用它 */
+:root{
+  --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --text:#1c1f23; --muted:#6b7280;
+  --accent:#2563eb; --accent-soft:#eff4ff; --ok:#15803d; --warn:#b45309; --err:#b91c1c;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 24px;
+  display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:10}
+header h1{font-size:16px;margin:0;font-weight:600}
+.badge{font-size:12px;padding:3px 10px;border-radius:20px;background:#eef0f3;color:var(--muted)}
+.badge.ok{background:#e7f6ec;color:var(--ok)}
+.badge.err{background:#fdecec;color:var(--err)}
+.badge.warn{background:#fdf3e3;color:var(--warn)}
+main{max-width:1080px;margin:0 auto;padding:20px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap}
+.tabs button{border:1px solid var(--line);background:var(--card);padding:7px 16px;
+  border-radius:var(--radius);cursor:pointer;font-size:13px;color:var(--muted)}
+.tabs button.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.panel{display:none}
+.panel.active{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px;margin-bottom:14px}
+.card h2{font-size:14px;margin:0 0 14px;font-weight:600}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 4px}
+input[type=text],input[type=password],input[type=number],select,textarea{
+  width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+  font-size:13px;background:#fff;color:var(--text)}
+textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;min-height:120px}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.row>div{flex:1;min-width:180px}
+button.primary{background:var(--accent);color:#fff;border:none;padding:9px 18px;
+  border-radius:8px;cursor:pointer;font-size:13px}
+button.ghost{background:var(--card);color:var(--text);border:1px solid var(--line);
+  padding:9px 18px;border-radius:8px;cursor:pointer;font-size:13px}
+button:disabled{opacity:.5;cursor:not-allowed}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:500;font-size:12px}
+tr.clickable{cursor:pointer}
+tr.clickable:hover{background:var(--accent-soft)}
+.now{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.now .title{font-size:15px;font-weight:600}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+input[type=range]{width:180px}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.empty{color:var(--muted);font-size:13px;padding:16px 0}
+/* 音乐库：四个标签 + 分组表 + 行内操作 */
+.libtabs{margin:0 0 12px}
+.libtabs button{padding:6px 14px;font-size:13px}
+.libview{display:none}
+.libview.active{display:block}
+.songtable td,.grouptable td{vertical-align:middle}
+.grouptable .gname{font-weight:500}
+.ops{white-space:nowrap;text-align:right}
+button.mini{padding:4px 10px;font-size:12px}
+button.danger{color:var(--err)}
+.pickmenu{position:fixed;z-index:60;background:var(--card);border:1px solid var(--line);
+  border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px;
+  min-width:180px;max-height:300px;overflow:auto;display:none}
+.pickmenu button{display:block;width:100%;text-align:left;background:none;border:none;
+  padding:7px 10px;border-radius:6px;font-size:13px;cursor:pointer;color:var(--text)}
+.pickmenu button:hover{background:var(--accent-soft)}
+.pickmenu .sep{height:1px;background:var(--line);margin:5px 0}
+.toast{position:fixed;left:50%;bottom:30px;transform:translate(-50%,12px);z-index:70;
+  background:#1f2937;color:#fff;font-size:13px;padding:9px 16px;border-radius:8px;
+  box-shadow:0 8px 24px rgba(0,0,0,.2);opacity:0;pointer-events:none;
+  transition:opacity .18s,transform .18s;max-width:70vw}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.toast.err{background:var(--err)}
+/* 本机播放 */
+.localnote{font-size:12px;color:var(--muted);margin-top:6px}
+.prog{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:10px}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+#audioGate{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:80;
+  background:var(--accent);color:#fff;border:none;padding:11px 20px;border-radius:24px;
+  font-size:14px;cursor:pointer;box-shadow:0 8px 24px rgba(37,99,235,.35);display:none}
+/* 展开出来的歌曲表：紧贴在被点击那一行的下面 */
+.sublist{background:var(--accent-soft);border-radius:8px;padding:10px 12px;margin:2px 0 6px}
+.sublist .hint{margin:0 0 6px}
+/* 移动端底部迷你播放条（默认隐藏，窄屏才出现） */
+.minibar{display:none}
+/* 后台页 */
+.adminlink{font-size:12px;text-decoration:none;color:var(--muted);background:var(--card);
+  border:1px solid var(--line);padding:4px 12px;border-radius:20px}
+.adminlink:hover{color:var(--accent);border-color:var(--accent)}
+#gate{max-width:380px;margin:10vh auto}
+#gate .card{padding:22px}
+.gate-title{font-size:15px;font-weight:600;margin:0 0 4px}
+#adminBody{display:none}
+@media (max-width:640px){
+  header{padding:10px 14px;gap:8px;flex-wrap:wrap}
+  header h1{font-size:15px}
+  main{padding:12px 12px 104px}
+  .card{padding:14px}
+  .tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}
+  .tabs button{white-space:nowrap;flex:0 0 auto}
+  .row>div{min-width:100%}
+  input[type=range]{width:100%}
+  /* 窄屏放不下歌手/文件夹两列，留歌名、时长和操作 */
+  .songtable th:nth-child(3),.songtable td:nth-child(3),
+  .songtable th:nth-child(4),.songtable td:nth-child(4){display:none}
+  #devTable th:nth-child(4),#devTable td:nth-child(4){display:none}
+  th,td{padding:9px 6px}
+  button.mini{padding:6px 12px;font-size:13px}
+  .controls>select,#selDevice{max-width:100%!important;flex:1}
+  #devTable select{max-width:100%!important}
+  #devTable td:nth-child(2){max-width:38vw;word-break:break-all}
+  .minibar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:60;
+    background:var(--card);border-top:1px solid var(--line);padding:10px 12px;
+    align-items:center;gap:10px;box-shadow:0 -2px 12px rgba(0,0,0,.06)}
+  .minibar .prog{position:absolute;left:0;right:0;top:0;margin:0;border-radius:0;height:3px}
+  .minibar .mt{flex:1;min-width:0}
+  .minibar .mt .t{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .minibar .mt .s{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .minibar button{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    width:40px;height:40px;font-size:16px;cursor:pointer;flex:0 0 auto;color:var(--text)}
+  .pickmenu{max-width:calc(100vw - 16px)}
+  .toast{bottom:88px;max-width:88vw}
+  #gate{margin:6vh 12px}
+}
