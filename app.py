@@ -40,6 +40,31 @@ log = logging.getLogger(LOG_NAME)
 
 WEB_DIR = Path(__file__).parent / "web"
 
+# 本机播放的会话上限与闲置回收时长：会话只是一份队列+一个游标，很轻，
+# 但没上限的话每个来路不明的请求都会留下一个，必须封顶。
+LOCAL_SESSION_MAX = 16
+LOCAL_SESSION_TTL = 6 * 3600
+
+
+def _norm_sid(raw: str) -> str:
+    """会话号做白名单过滤：它会被拼进 did 并出现在 URL 里
+
+    只留字母数字与 - _，其余丢掉；再截断长度，避免被塞进奇怪的键。
+    """
+    s = "".join(c for c in (raw or "") if c.isalnum() or c in "-_")
+    return s[:64]
+
+
+def _local_sid(did: str) -> str:
+    """从 did 取会话号：`local` -> ''，`local:abc` -> 'abc'"""
+    if did == LOCAL_DID:
+        return ""
+    return _norm_sid(did.split(":", 1)[1]) if ":" in did else ""
+
+
+def _is_local_did(did: str) -> bool:
+    return did == LOCAL_DID or did.startswith(LOCAL_DID + ":")
+
 
 class AppState:
     """全局状态容器"""
@@ -51,7 +76,9 @@ class AppState:
         self.library = MusicLibrary(self.config, self.media)
         self.buffers = BufferManager()
         self.streams = StreamManager()           # 可中断的音频流管理
-        self.players: dict[str, Player] = {}     # did -> Player
+        self.players: dict[str, Player] = {}     # did -> Player（只含真实音箱）
+        # 本机播放按会话隔离：session_id -> LocalPlayer，各设备互不干扰
+        self.local_sessions: dict[str, LocalPlayer] = {}
         self.dlna: DLNAServer | None = None
         self.ha_client: HAClient | None = None
         self.ai_bridge: AIBridge | None = None
@@ -66,7 +93,7 @@ class AppState:
         self._qr_applied = False
 
     async def _cleanup_loop(self):
-        """每小时清理一次 DLNA 推送产生的临时音频"""
+        """每小时清理一次 DLNA 推送产生的临时音频与闲置的本机播放会话"""
         try:
             while True:
                 await asyncio.sleep(3600)
@@ -74,8 +101,49 @@ class AppState:
                     self.media.cleanup_cache()
                 except Exception as e:
                     log.debug(f"缓存清理失败: {e}")
+                try:
+                    self._purge_local_sessions()
+                except Exception as e:
+                    log.debug(f"本机播放会话清理失败: {e}")
         except asyncio.CancelledError:
             pass
+
+    # ---------------- 本机播放会话 ----------------
+    def local_player(self, session_id: str = "") -> LocalPlayer:
+        """取（或新建）某个浏览器会话的本机播放器
+
+        本机播放必须按会话隔离：每台设备各播各的，谁的操作都不该打断谁。
+        """
+        sid = _norm_sid(session_id)
+        p = self.local_sessions.get(sid)
+        if p is None:
+            if len(self.local_sessions) >= LOCAL_SESSION_MAX:
+                self._evict_local_session()
+            p = LocalPlayer(self.config, self.media, session_id=sid)
+            p.volume = self.config.default_volume
+            self.local_sessions[sid] = p
+            log.info(f"本机播放会话已建立: {sid or '(默认)'}")
+        p.touch()
+        return p
+
+    def _evict_local_session(self):
+        """挤到上限时，回收最久没动过的那个会话"""
+        if not self.local_sessions:
+            return
+        sid = min(self.local_sessions, key=lambda k: self.local_sessions[k].last_seen)
+        self.local_sessions.pop(sid, None)
+        log.info(f"本机播放会话数达上限，回收最久未用的: {sid or '(默认)'}")
+
+    def _purge_local_sessions(self) -> int:
+        """清掉长时间没人用的会话（页面关了就不会再来 touch）"""
+        now = time.time()
+        dead = [s for s, p in self.local_sessions.items()
+                if now - p.last_seen > LOCAL_SESSION_TTL]
+        for s in dead:
+            self.local_sessions.pop(s, None)
+        if dead:
+            log.info(f"已清理 {len(dead)} 个闲置的本机播放会话")
+        return len(dead)
 
     # ---------------- 初始化 ----------------
     async def bootstrap(self) -> bool:
@@ -90,9 +158,8 @@ class AppState:
             await asyncio.to_thread(self.library.scan)
             asyncio.create_task(asyncio.to_thread(self.library.attach_meta))
 
-            # 本机播放只靠曲库，不靠小米账号，先建好：即使没配账号/没选音箱，
-            # 浏览器里也照样能听歌（它同时是默认输出通道）。
-            self._ensure_local_player()
+            # 曲库扫完本机播放就能用（会话在首次请求时按需建立）：即使没配
+            # 账号、没选音箱，浏览器里也照样能听歌。
             self.ready = True
 
             if not (cfg.cookie or (cfg.account and cfg.password)):
@@ -146,19 +213,8 @@ class AppState:
             log.exception(self.last_error)
             return False
 
-    def _ensure_local_player(self) -> LocalPlayer:
-        """保证本机播放器存在，且排在设备列表最前（它是默认输出）"""
-        p = self.players.get(LOCAL_DID)
-        if p is None:
-            p = LocalPlayer(self.config, self.media)
-            p.volume = self.config.default_volume
-            # 插到最前面：界面与 state.player() 的默认回退都取第一个
-            self.players = {LOCAL_DID: p, **self.players}
-            log.info(f"播放器就绪: {p.speaker.name}（本机浏览器）")
-        return p
-
     def speaker_players(self) -> dict[str, "Player"]:
-        """真实的小爱音箱，不含本机播放
+        """真实的小爱音箱
 
         语音分发、语音轮询与 DLNA 只认这些。本机播放是浏览器专属通道，
         小爱不可能"投"到浏览器上，混进来会让语音指令落到错误的输出。
@@ -169,14 +225,7 @@ class AppState:
         }
 
     def _build_players(self):
-        # 保留已有的本机播放器（可能已经在播），避免重建把队列冲掉
-        local = self.players.get(LOCAL_DID)
         self.players = {}
-        if local is not None:
-            self.players[LOCAL_DID] = local
-        else:
-            self._ensure_local_player()
-
         for sp in self.config.get_enabled_speakers():
             if not sp.device_id:
                 log.warning(f"音箱 {sp.name or sp.did} 缺少 device_id，跳过")
@@ -234,6 +283,7 @@ class AppState:
         self.library = MusicLibrary(self.config, self.media)
         self.buffers = BufferManager()
         self.streams = StreamManager()
+        self.local_sessions = {}
         return await self.bootstrap()
 
     async def shutdown(self):
@@ -252,6 +302,9 @@ class AppState:
             await self.dlna.stop()
         for p in self.players.values():
             await p.close()
+        for p in self.local_sessions.values():
+            await p.close()
+        self.local_sessions = {}
         if self.ai_bridge:
             await self.ai_bridge.close()
             self.ai_bridge = None
@@ -264,6 +317,13 @@ class AppState:
 
     # ---------------- 查询辅助 ----------------
     def player(self, did: str) -> Player:
+        """did -> Player
+
+        本机播放的 did 形如 `local:<会话号>`，按会话取各自的播放器；真实音箱
+        走 self.players。找不到就退回到第一台音箱，与既有行为一致。
+        """
+        if _is_local_did(did):
+            return self.local_player(_local_sid(did))
         p = self.players.get(did) or next(iter(self.players.values()), None)
         if p is None:
             raise HTTPException(status_code=404, detail="没有可用音箱")
@@ -345,13 +405,17 @@ async def index():
 
 # ==================== 状态 ====================
 @app.get("/api/status")
-async def api_status():
+async def api_status(request: Request):
     booting = state.boot_task is not None and not state.boot_task.done()
+    # 本机播放按会话隔离：只把自己那条"本机播放"给出去，别把别人的也列出来
+    sid = _norm_sid(request.headers.get("X-Mibox-Session", ""))
+    local = state.local_player(sid)
     return {
         "ready": state.ready,
         "xiaomi_ready": state.xiaomi_ready,
         "booting": booting,
         "error": state.last_error,
+        "session": sid,
         "hostname": state.config.hostname,
         "web_port": state.config.web_port,
         "dlna_port": state.config.dlna_port,
@@ -363,7 +427,8 @@ async def api_status():
         "enable_ai": state.config.ai_enabled,
         "ha_control": state.config.ha_control,
         "ai_ready": bool(state.ai_bridge and state.ai_bridge.configured),
-        "players": [p.status() for p in state.players.values()],
+        # 本会话的本机播放排在最前（它是默认输出），后面才是真实音箱
+        "players": [local.status()] + [p.status() for p in state.players.values()],
     }
 
 

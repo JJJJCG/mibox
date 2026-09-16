@@ -14,12 +14,17 @@
 - 在浏览器里点播 —— 默认选中本机播放，声音从当前设备出来。
 
 这才是"音乐服务器"该有的样子：语音入口和浏览器入口各走各的通道。
+
+**按会话隔离。** 每个浏览器会话（`local:<会话号>`）有独立的一份队列与播放
+状态，一台设备暂停/切歌不会影响另一台。会话由 `AppState.local_sessions`
+统一持有，闲置超时或被挤到上限就回收。
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import time
 from urllib.parse import quote
 
 from .config import Config, Speaker
@@ -30,9 +35,20 @@ from .player import Player
 log = logging.getLogger("mibox")
 
 
-def make_local_speaker() -> Speaker:
+def local_did(session_id: str = "") -> str:
+    """本机播放的 did：会话号拼在后面，用来区分不同设备/标签页
+
+    `local` 表示默认会话（手工调接口、没带会话头时用），`local:abc` 才是
+    某个具体浏览器会话。
+    """
+    return f"{LOCAL_DID}:{session_id}" if session_id else LOCAL_DID
+
+
+def make_local_speaker(session_id: str = "") -> Speaker:
     """本机播放的"伪音箱"，只为复用 Player 里的音箱字段"""
-    sp = Speaker(did=LOCAL_DID, name=LOCAL_NAME, hardware="browser", enabled=True)
+    sp = Speaker(
+        did=local_did(session_id), name=LOCAL_NAME, hardware="browser", enabled=True
+    )
     sp.ensure_udn()
     return sp
 
@@ -92,13 +108,23 @@ class LocalController:
 
 
 class LocalPlayer(Player):
-    """在当前设备上出声的播放器"""
+    """在当前设备上出声的播放器
+
+    每个浏览器会话一个实例：队列、当前曲目、播放状态、音量都各管各的，
+    所以一台设备上的操作不会打断另一台。
+    """
 
     is_local = True
 
-    def __init__(self, config: Config, media: MediaService):
-        speaker = make_local_speaker()
+    def __init__(self, config: Config, media: MediaService, session_id: str = ""):
+        self.session_id = session_id
+        self.last_seen = time.time()
+        speaker = make_local_speaker(session_id)
         super().__init__(speaker, LocalController(speaker), config, media)
+
+    def touch(self):
+        """标记这个会话还在用（回收闲置会话时按它排队）"""
+        self.last_seen = time.time()
 
     # ---------------- 地址 ----------------
     async def _resolve(self, item):
