@@ -732,9 +732,11 @@ async def api_playlist_remove(name: str, request: Request):
 # ==================== 播放控制 ====================
 @app.post("/api/player/{did}/play")
 async def api_play(did: str, request: Request):
-    """body: {keyword? | song? | folder? | artist? | playlist? | favorites? | index?}
+    """body: {keyword? | song? | folder? | artist? | playlist? | favorites? | index? | shuffle?}
 
     song 可以是相对路径（界面按列表点播）或歌名（沿用旧的调用方式）。
+    shuffle 为 true/false 表示这次点播明确要随机/顺序；不给则沿用当前模式
+    （与语音一致：语音说了"随机播放"就随机，没说就顺序）。
     """
     body = await request.json()
     player = state.player(did)
@@ -767,8 +769,9 @@ async def api_play(did: str, request: Request):
 
     if not songs:
         raise HTTPException(status_code=404, detail="没有匹配的歌曲")
-    await player.play_songs(songs)
-    return {"ok": True, "count": len(songs)}
+    shuffle = body.get("shuffle")
+    await player.play_songs(songs, shuffle=None if shuffle is None else bool(shuffle))
+    return {"ok": True, "count": len(songs), "mode": player.mode}
 
 
 @app.post("/api/player/{did}/control")

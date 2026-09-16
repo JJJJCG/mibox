@@ -181,7 +181,15 @@ class Player:
         self.cur_item = self.queue[self.index]
         await self._play_current()
 
-    async def play_songs(self, songs, start: int = 0):
+    async def play_songs(self, songs, start: int = 0, shuffle: bool | None = None):
+        """用一批歌替换队列并开始播放
+
+        `shuffle` 决定这一次怎么放：True 随机、False 顺序、None 沿用当前模式
+        （界面下拉选的模式照旧生效）。语音点歌总是明确传 True/False——说了
+        "随机播放"就随机，没说就顺序，不会因为上一次切过随机而继续随机。
+        """
+        if shuffle is not None:
+            self.mode = PLAY_MODE_SHUFFLE if shuffle else PLAY_MODE_NORMAL
         items = [QueueItem(name=s.name, song=s) for s in songs]
         # 先记下列表原始顺序（供切回顺序播放时还原），再按模式决定是否整表打乱
         self._order = list(items)

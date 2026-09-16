@@ -81,6 +81,17 @@ class CommandDispatcher:
         log.debug(f"未匹配任何指令: {query}")
 
     # ---------------- 音乐指令 ----------------
+    async def _play(self, player: Player, songs, params: dict):
+        """点歌统一入口：本次随机还是顺序，由指令里的"随机"字样决定
+
+        `shuffle` 为 None 表示指令没提模式（走到这里的语音指令一般都会带上），
+        那就沿用当前模式。
+        """
+        await player.play_songs(songs, shuffle=params.get("shuffle"))
+        log.info(
+            f"[{player.speaker.name}] 本次点歌 {len(songs)} 首，播放模式 {player.mode}"
+        )
+
     async def _run_music(self, player: Player, action: str, params: dict):
         lib = self.library
 
@@ -93,7 +104,7 @@ class CommandDispatcher:
             if not songs:
                 log.warning(f"未在本地音乐库找到: {kw}")
                 return
-            await player.play_songs(songs)
+            await self._play(player, songs, params)
             return
 
         if action == "play_folder":
@@ -102,7 +113,7 @@ class CommandDispatcher:
             if not songs:
                 log.warning(f"未找到文件夹: {kw}")
                 return
-            await player.play_songs(songs)
+            await self._play(player, songs, params)
             return
 
         if action == "play_artist":
@@ -111,7 +122,7 @@ class CommandDispatcher:
             if not songs:
                 log.warning(f"未找到歌手: {kw}")
                 return
-            await player.play_songs(songs)
+            await self._play(player, songs, params)
             return
 
         if action == "play_playlist":
@@ -120,7 +131,7 @@ class CommandDispatcher:
             if not songs:
                 log.warning(f"未找到歌单: {kw}")
                 return
-            await player.play_songs(songs)
+            await self._play(player, songs, params)
             return
 
         if action == "play_favorites":
@@ -128,7 +139,7 @@ class CommandDispatcher:
             if not songs:
                 log.warning("收藏列表为空")
                 return
-            await player.play_songs(songs)
+            await self._play(player, songs, params)
             return
 
         if action == "play_index":
@@ -147,7 +158,9 @@ class CommandDispatcher:
             return
 
         if action == "mode":
-            player.set_mode(params.get("mode", PLAY_MODE_NORMAL))
+            mode = params.get("mode", PLAY_MODE_NORMAL)
+            player.set_mode(mode)
+            # 切到随机是立刻打乱当前队列剩下的部分，切回顺序则还原原顺序
             log.info(f"播放模式切换为 {player.mode}")
             return
 
